@@ -148,7 +148,8 @@ export function AppProvider({ children }) {
             import.meta.env.MODE === 'production' ?
                 window.location.port :
                 import.meta.env.VITE_WEBSOCKET_PORT;
-        const wsUrl = `${wsProtocol}//${HOST}:${PORT}/download-task`;
+        const portSegment = PORT ? `:${PORT}` : '';
+        const wsUrl = `${wsProtocol}//${HOST}${portSegment}/download-task`;
         console.log('连接WebSocket:', wsUrl);
 
         try {
