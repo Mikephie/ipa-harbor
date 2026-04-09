@@ -104,6 +104,7 @@
         "appleId": "Apple ID",
         "password": "密码",
         "twoFactorCode": "二次验证码",
+        "manualTwoFactorEntry": "已有验证码？手动输入 2FA",
         "verifyAndLogin": "验证并登录",
         "loggingIn": "登录中...",
         "loginWithAppleId": "请使用您的 Apple ID 登录",

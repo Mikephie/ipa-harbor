@@ -104,6 +104,7 @@
         "appleId": "Apple ID",
         "password": "Password",
         "twoFactorCode": "Two-Factor Code",
+        "manualTwoFactorEntry": "Already have a code? Enter 2FA manually",
         "verifyAndLogin": "Verify & Login",
         "loggingIn": "Logging in...",
         "loginWithAppleId": "Sign in with your Apple ID",

@@ -109,6 +109,11 @@ const AppleIdLogin = () => {
         }));
     };
 
+    const handleManualTwoFactor = () => {
+        setError('');
+        setShowTwoFactor(true);
+    };
+
     const handleLogout = async () => {
         try {
             const result = await Swal.fire({
@@ -283,6 +288,15 @@ const AppleIdLogin = () => {
                                 <Typography level="body-xs" sx={{ textAlign: 'center', color: 'text.secondary' }}>
                                     {t('ui.loginRequiredHint')}
                                 </Typography>
+                                <Button
+                                    variant="plain"
+                                    size="sm"
+                                    onClick={handleManualTwoFactor}
+                                    disabled={loading}
+                                    sx={{ mt: 1 }}
+                                >
+                                    {t('ui.manualTwoFactorEntry')}
+                                </Button>
                                 {isDev && (
                                     <Stack spacing={1} sx={{ mt: 2 }}>
                                         <Button
