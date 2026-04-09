@@ -111,6 +111,8 @@
         "passwordPlaceholder": "请输入密码",
         "twoFactorPlaceholder": "请输入 6 位验证码",
         "twoFactorHint": "请查看您的受信任设备或短信/邮件获取验证码",
+        "quickTestTwoFactor": "快速测试 2FA 界面",
+        "quickTestTwoFactorHint": "仅开发环境可见：不请求后端，直接进入验证码输入步骤",
         "loginRequiredHint": "需要登录后才能搜索应用、领取应用和下载 App Store 中的 IPA",
         "adminLoginTitle": "登入系统",
         "adminLoginSubtitle": "请输入管理员账户",

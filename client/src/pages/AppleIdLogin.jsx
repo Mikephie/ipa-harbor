@@ -27,7 +27,8 @@ import { useTranslation } from 'react-i18next';
 const AppleIdLogin = () => {
     const { t } = useTranslation();
     const navigate = useNavigate();
-    const { setUser, user, isAuthenticated, checkAuthStatus, logout } = useApp();
+    const { setUser, user, isAuthenticated, logout } = useApp();
+    const isDev = import.meta.env.DEV;
 
     const [formData, setFormData] = useState({
         email: '',
@@ -97,6 +98,15 @@ const AppleIdLogin = () => {
 
     const handleBackToHome = () => {
         navigate('/');
+    };
+
+    const handleQuickTestTwoFactor = () => {
+        setError('');
+        setShowTwoFactor(true);
+        setFormData(prev => ({
+            ...prev,
+            twoFactor: prev.twoFactor || '123456'
+        }));
     };
 
     const handleLogout = async () => {
@@ -273,6 +283,21 @@ const AppleIdLogin = () => {
                                 <Typography level="body-xs" sx={{ textAlign: 'center', color: 'text.secondary' }}>
                                     {t('ui.loginRequiredHint')}
                                 </Typography>
+                                {isDev && (
+                                    <Stack spacing={1} sx={{ mt: 2 }}>
+                                        <Button
+                                            variant="soft"
+                                            color="warning"
+                                            onClick={handleQuickTestTwoFactor}
+                                            disabled={loading}
+                                        >
+                                            {t('ui.quickTestTwoFactor')}
+                                        </Button>
+                                        <Typography level="body-xs" sx={{ textAlign: 'center', color: 'text.tertiary' }}>
+                                            {t('ui.quickTestTwoFactorHint')}
+                                        </Typography>
+                                    </Stack>
+                                )}
                             </>
                         )}
                     </CardContent>

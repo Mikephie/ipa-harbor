@@ -111,6 +111,8 @@
         "passwordPlaceholder": "Enter your password",
         "twoFactorPlaceholder": "Enter 6-digit code",
         "twoFactorHint": "Check your trusted device or SMS/email for the verification code",
+        "quickTestTwoFactor": "Quick test 2FA UI",
+        "quickTestTwoFactorHint": "Visible in development only: skips backend and jumps to code input step",
         "loginRequiredHint": "Login required to search apps, claim apps and download IPAs from App Store",
         "adminLoginTitle": "Login System",
         "adminLoginSubtitle": "Enter admin credentials",
