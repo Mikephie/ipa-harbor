@@ -5,6 +5,35 @@ const path = require('path');
 const IPATOOL_PATH = path.join(__dirname, '../../bin/ipatool');
 const { KEYCHAIN_PASSPHRASE } = require('../../config/keychain');
 
+function isTwoFactorRequired(output = '') {
+    if (!output || typeof output !== 'string') {
+        return false;
+    }
+
+    const normalized = output.toLowerCase();
+    return (
+        normalized.includes('2fa code is required') ||
+        normalized.includes('two-factor') ||
+        normalized.includes('two factor') ||
+        normalized.includes('verification code') ||
+        normalized.includes('security code') ||
+        normalized.includes('trusted device') ||
+        normalized.includes('trusted phone')
+    );
+}
+
+function parseJsonSafely(content = '') {
+    if (!content || typeof content !== 'string') {
+        return null;
+    }
+
+    try {
+        return JSON.parse(content);
+    } catch (_) {
+        return null;
+    }
+}
+
 /**
  * 执行ipatool命令的通用函数
  * @param {string} command - 要执行的命令
@@ -13,14 +42,26 @@ const { KEYCHAIN_PASSPHRASE } = require('../../config/keychain');
 function executeIpatool(command) {
     return new Promise((resolve, reject) => {
         exec(command, { timeout: 30000 }, (error, stdout, stderr) => {
+            const jsonStdout = parseJsonSafely(stdout);
+            const jsonStderr = parseJsonSafely(stderr);
+            const combinedOutput = `${stdout || ''}\n${stderr || ''}`;
+
             if (error) {
+                const jsonMessage = jsonStdout?.message || jsonStderr?.message || '';
+                const needsTwoFactor = Boolean(
+                    jsonStdout?.needsTwoFactor ||
+                    jsonStderr?.needsTwoFactor ||
+                    isTwoFactorRequired(jsonMessage) ||
+                    isTwoFactorRequired(combinedOutput)
+                );
+
                 // 检查是否是需要2FA的错误
-                if (stderr.includes('2FA code is required') || stdout.includes('2FA code is required')) {
+                if (needsTwoFactor) {
                     resolve({
                         success: false,
                         needsTwoFactor: true,
                         message: '需要二次验证码',
-                        rawOutput: stdout || stderr
+                        rawOutput: combinedOutput
                     });
                 } else {
                     reject({
@@ -33,7 +74,7 @@ function executeIpatool(command) {
             } else {
                 try {
                     // 尝试解析JSON输出
-                    const result = JSON.parse(stdout);
+                    const result = jsonStdout || JSON.parse(stdout);
                     resolve({
                         success: true,
                         data: result
@@ -70,7 +111,9 @@ async function loginHandler(req, res) {
 
         // 如果提供了二次验证码，添加到命令中
         if (twoFactor) {
-            command += ` --auth-code "${twoFactor}"`;
+            // 2FA验证码仅允许数字，避免参数异常并提升兼容性
+            const sanitizedTwoFactor = String(twoFactor).replace(/\D/g, '').slice(0, 8);
+            command += ` --auth-code "${sanitizedTwoFactor}"`;
         }
 
         // console.log(`执行登录命令: ${command.replace(password, '***').replace(twoFactor || '', '***')}`);
@@ -81,7 +124,7 @@ async function loginHandler(req, res) {
             if (result.success) {
                 // 检查返回的数据中是否包含2FA要求
                 const resultData = result.data || {};
-                if (resultData.message && resultData.message.includes('2FA code is required')) {
+                if (isTwoFactorRequired(resultData.message || '')) {
                     // 处理message，移除分号后的内容
                     const cleanMessage = resultData.message.split(';')[0];
                     return res.status(200).json({
@@ -142,7 +185,7 @@ async function loginHandler(req, res) {
             console.error('执行ipatool命令时出错:', execError?.stdout);
 
             // 检查错误信息中是否包含2FA相关内容
-            if (execError.stderr && (execError.stderr.includes('2FA') || execError.stderr.includes('two-factor'))) {
+            if (isTwoFactorRequired(`${execError.stdout || ''}\n${execError.stderr || ''}`)) {
                 return res.status(200).json({
                     success: false,
                     needsTwoFactor: true,
