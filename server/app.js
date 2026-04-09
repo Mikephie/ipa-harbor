@@ -41,6 +41,8 @@ console.log(`---`);
 
 // === Express 基础配置 ===
 const app = express();
+// 运行在 NAS/反代后时，需要信任代理头，避免 rate-limit 因 X-Forwarded-For 抛错
+app.set('trust proxy', 1);
 const HOST = 'localhost';
 const PORT = process.env.PORT || 3080;
 const HTTPS_PORT = process.env.HTTPS_PORT || 3443;
