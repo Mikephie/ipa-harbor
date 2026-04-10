@@ -97,6 +97,7 @@
         "clearFilter": "Click title to clear filter",
         "goToHomeSearch": "Go to home to search and download apps",
         "totalFiles": "Total {{count}} files, {{size}} storage used",
+        "manageAppleAccounts": "Apple Account",
         "appleIdLogin": "Apple ID Login",
         "appleIdLoggedIn": "Apple ID Logged In",
         "needAppleIdLogin": "Need Apple ID Login",

@@ -108,7 +108,19 @@ export default function AppShell({ children }) {
                             </Button>
                         </Badge>
 
-                        {isAuthenticated ? <UserStatus /> : (
+                        {isAuthenticated ? (
+                            <Stack direction="row" spacing={0.5} alignItems="center">
+                                <Button
+                                    variant="soft"
+                                    size="sm"
+                                    color={location.pathname === '/apple-id' ? 'primary' : 'neutral'}
+                                    onClick={() => handleNavigate('/apple-id')}
+                                >
+                                    {t('ui.manageAppleAccounts')}
+                                </Button>
+                                <UserStatus />
+                            </Stack>
+                        ) : (
                             <Badge color="danger" size="md" invisible={location.pathname === '/apple-id'} >
                                 <Button
                                     variant="outlined"

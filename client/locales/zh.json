@@ -97,6 +97,7 @@
         "clearFilter": "点击标题可以清除筛选",
         "goToHomeSearch": "前往首页搜索并下载应用",
         "totalFiles": "总计 {{count}} 个文件，占用 {{size}} 存储空间",
+        "manageAppleAccounts": "Apple 账号",
         "appleIdLogin": "登录 Apple ID",
         "appleIdLoggedIn": "Apple ID 已登录",
         "needAppleIdLogin": "需要登录 Apple ID",
