@@ -4,15 +4,20 @@ const path = require('path');
 // ipatool二进制文件路径
 const IPATOOL_PATH = path.join(__dirname, '../../bin/ipatool');
 const { KEYCHAIN_PASSPHRASE } = require('../../config/keychain');
+const { ipatoolEnvForAccount } = require('../../utils/appleAccount');
 
 /**
  * 执行ipatool命令的通用函数
  * @param {string} command - 要执行的命令
+ * @param {string} accountId - Apple 账号目录 ID
  * @returns {Promise} 返回Promise对象
  */
-function executeIpatool(command) {
+function executeIpatool(command, accountId) {
     return new Promise((resolve, reject) => {
-        exec(command, { timeout: 60000 }, (error, stdout, stderr) => {
+        exec(command, {
+            timeout: 60000,
+            env: ipatoolEnvForAccount(accountId),
+        }, (error, stdout, stderr) => {
             if (error) {
                 reject({
                     success: false,
@@ -62,7 +67,7 @@ async function purchaseHandler(req, res) {
         // console.log(`执行购买命令: ${command}`);
 
         try {
-            const result = await executeIpatool(command);
+            const result = await executeIpatool(command, req.appleAccountId);
 
             if (result.success) {
                 return res.json({

@@ -5,19 +5,24 @@ const path = require('path');
 // ipatool二进制文件路径
 const IPATOOL_PATH = path.join(__dirname, '../../bin/ipatool');
 const { KEYCHAIN_PASSPHRASE } = require('../../config/keychain');
+const { readAppleAccountIdFromRequest, ipatoolEnvForAccount } = require('../../utils/appleAccount');
 
 // 1×1 透明 GIF
 const ONE_PIXEL_GIF_BASE64 =
     'R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
 
 /**
- * 获取当前用户的地区设置
+ * 获取当前用户的地区设置（同域请求可带 Apple 账号 cookie）
  */
-async function getUserRegion() {
+async function getUserRegion(req) {
     return new Promise((resolve) => {
+        const accountId = req ? readAppleAccountIdFromRequest(req) : null;
         const command = `"${IPATOOL_PATH}" auth info --keychain-passphrase "${KEYCHAIN_PASSPHRASE}" --non-interactive --format "json"`;
-        
-        exec(command, { timeout: 15000 }, (error, stdout, stderr) => {
+        const execOpts = accountId
+            ? { timeout: 15000, env: ipatoolEnvForAccount(accountId) }
+            : { timeout: 15000 };
+
+        exec(command, execOpts, (error, stdout, stderr) => {
             if (error) {
                 resolve(null);
             } else {
@@ -51,8 +56,8 @@ const getAppIcon = async (req, res) => {
     }
 
     // 获取用户地区设置
-    const userRegion = await getUserRegion();
-    
+    const userRegion = await getUserRegion(req);
+
     let lookupUrl;
     if (userRegion) {
         lookupUrl = `https://itunes.apple.com/${userRegion}/lookup?id=${appId}`;
@@ -132,8 +137,8 @@ const getAppIconUrl = async (req, res) => {
     const size = req.params.size;
     
     // 获取用户地区设置
-    const userRegion = await getUserRegion();
-    
+    const userRegion = await getUserRegion(req);
+
     let lookupUrl;
     if (userRegion) {
         lookupUrl = `https://itunes.apple.com/${userRegion}/lookup?id=${appId}`;

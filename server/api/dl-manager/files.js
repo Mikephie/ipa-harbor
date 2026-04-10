@@ -6,7 +6,7 @@ const { getTaskManager } = require('./taskManager');
 async function filesHandler(req, res) {
     try {
         const taskManager = getTaskManager();
-        const files = taskManager.getFiles();
+        const files = taskManager.getFiles(req.appleAccountId);
 
         return res.json({
             success: true,

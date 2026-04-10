@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
     Box,
     Card,
@@ -13,13 +13,14 @@ import {
     IconButton,
     Alert,
     Divider,
+    Chip,
     Accordion,
     AccordionSummary,
     AccordionDetails,
     Link
 } from '@mui/joy';
-import { ArrowBack, ExpandMore } from '@mui/icons-material';
-import { login, revokeAuth } from '../utils/api';
+import { ArrowBack, ExpandMore, Delete } from '@mui/icons-material';
+import { login, revokeAuth, listAppleAccounts, switchAppleAccount, removeAppleAccount } from '../utils/api';
 import { useApp } from '../contexts/AppContext';
 import Swal from 'sweetalert2';
 import { useTranslation } from 'react-i18next';
@@ -27,8 +28,27 @@ import { useTranslation } from 'react-i18next';
 const AppleIdLogin = () => {
     const { t } = useTranslation();
     const navigate = useNavigate();
-    const { setUser, user, isAuthenticated, logout } = useApp();
+    const [searchParams, setSearchParams] = useSearchParams();
+    const { setUser, user, isAuthenticated, logout, reconnectDownloadWebSocket } = useApp();
     const isDev = import.meta.env.DEV;
+    const addMode = searchParams.get('add') === '1';
+    const showLoginForm = !isAuthenticated || addMode;
+
+    const [savedAccounts, setSavedAccounts] = useState([]);
+
+    const refreshSavedAccounts = useCallback(async () => {
+        if (!isAuthenticated) return;
+        try {
+            const r = await listAppleAccounts();
+            if (r.success && r.data?.accounts) setSavedAccounts(r.data.accounts);
+        } catch {
+            setSavedAccounts([]);
+        }
+    }, [isAuthenticated]);
+
+    useEffect(() => {
+        refreshSavedAccounts();
+    }, [isAuthenticated, user?.accountId, refreshSavedAccounts]);
 
     const [formData, setFormData] = useState({
         email: '',
@@ -72,6 +92,12 @@ const AppleIdLogin = () => {
 
             if (response.success) {
                 setUser(response.data);
+                if (searchParams.get('add') === '1') {
+                    const next = new URLSearchParams(searchParams);
+                    next.delete('add');
+                    setSearchParams(next, { replace: true });
+                    reconnectDownloadWebSocket();
+                }
                 navigate('/');
             }
         } catch (error) {
@@ -98,6 +124,77 @@ const AppleIdLogin = () => {
 
     const handleBackToHome = () => {
         navigate('/');
+    };
+
+    const exitAddMode = () => {
+        const next = new URLSearchParams(searchParams);
+        next.delete('add');
+        setSearchParams(next, { replace: true });
+    };
+
+    const handlePageSwitch = async (accountId) => {
+        if (!accountId || accountId === user?.accountId) return;
+        try {
+            const r = await switchAppleAccount(accountId);
+            if (r.success && r.data) {
+                setUser(r.data);
+                reconnectDownloadWebSocket();
+                await refreshSavedAccounts();
+                Swal.fire({
+                    icon: 'success',
+                    title: t('ui.accountSwitched'),
+                    timer: 1200,
+                    toast: true,
+                    position: 'top',
+                    showConfirmButton: false,
+                });
+            }
+        } catch (error) {
+            Swal.fire({
+                icon: 'error',
+                title: t('ui.switchAccountFailed'),
+                text: error.message,
+                confirmButtonText: t('ui.confirm'),
+            });
+        }
+    };
+
+    const handlePageRemove = async (accountId) => {
+        const result = await Swal.fire({
+            title: t('ui.removeAppleAccountFromDevice'),
+            text: t('ui.confirmRemoveAppleAccount'),
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonText: t('ui.confirm'),
+            cancelButtonText: t('ui.cancel'),
+            confirmButtonColor: '#d33',
+        });
+        if (!result.isConfirmed) return;
+        try {
+            const r = await removeAppleAccount(accountId);
+            if (r.success) {
+                if (r.data?.wasCurrent) {
+                    logout();
+                } else {
+                    await refreshSavedAccounts();
+                }
+                Swal.fire({
+                    icon: 'success',
+                    title: t('ui.accountRemoved'),
+                    timer: 1500,
+                    toast: true,
+                    position: 'top',
+                    showConfirmButton: false,
+                });
+            }
+        } catch (error) {
+            Swal.fire({
+                icon: 'error',
+                title: t('ui.accountRemoveFailed'),
+                text: error.message,
+                confirmButtonText: t('ui.confirm'),
+            });
+        }
     };
 
     const handleQuickTestTwoFactor = () => {
@@ -164,19 +261,81 @@ const AppleIdLogin = () => {
             alignItems="center"
             justifyContent="flex-start"
         >
-            {isAuthenticated ?
+            {isAuthenticated && addMode && (
+                <Alert color="primary" variant="soft" sx={{ width: '100%', maxWidth: 400 }}>
+                    <Stack spacing={1}>
+                        <Typography level="body-sm">{t('ui.addAnotherAppleId')}</Typography>
+                        <Typography level="body-xs" sx={{ color: 'text.secondary' }}>
+                            {user.email}
+                        </Typography>
+                        <Button size="sm" variant="outlined" onClick={exitAddMode}>
+                            {t('ui.back')}
+                        </Button>
+                    </Stack>
+                </Alert>
+            )}
+
+            {isAuthenticated && !addMode ? (
                 <Card sx={{ width: '100%', maxWidth: 400 }}>
                     <CardContent>
                         <h1>{t('ui.appleIdLoggedIn')}</h1>
                         <Typography level="body-lg" sx={{ color: 'text.secondary' }}>{user.name}</Typography>
                         <Typography level="body-md" sx={{ color: 'text.secondary' }}>{user.email}</Typography>
                         <Divider sx={{ my: 2 }} />
-                        <Button variant="outlined" color="danger" size="lg" onClick={handleLogout}>
-                            {t('ui.revokeLogin')}
-                        </Button>
+                        <Typography level="title-sm" sx={{ mb: 1 }}>
+                            {t('ui.savedAppleAccounts')}
+                        </Typography>
+                        <Stack spacing={1} sx={{ mb: 2 }}>
+                            {savedAccounts.map((acc) => (
+                                <Stack
+                                    key={acc.accountId}
+                                    direction="row"
+                                    spacing={1}
+                                    alignItems="center"
+                                    sx={{
+                                        p: 1,
+                                        borderRadius: 'sm',
+                                        bgcolor: acc.current ? 'primary.softBg' : 'background.level1',
+                                    }}
+                                >
+                                    <Stack sx={{ flex: 1, minWidth: 0 }}>
+                                        <Typography level="body-sm" noWrap>{acc.email}</Typography>
+                                        {acc.current && (
+                                            <Chip size="sm" variant="soft" color="primary" sx={{ mt: 0.5, width: 'fit-content' }}>
+                                                {t('ui.currentAccountBadge')}
+                                            </Chip>
+                                        )}
+                                    </Stack>
+                                    {!acc.current && (
+                                        <Button size="sm" variant="soft" onClick={() => handlePageSwitch(acc.accountId)}>
+                                            {t('ui.switchAccountAction')}
+                                        </Button>
+                                    )}
+                                    <IconButton
+                                        size="sm"
+                                        color="danger"
+                                        variant="plain"
+                                        onClick={() => handlePageRemove(acc.accountId)}
+                                        aria-label={t('ui.removeAppleAccountFromDevice')}
+                                    >
+                                        <Delete />
+                                    </IconButton>
+                                </Stack>
+                            ))}
+                        </Stack>
+                        <Stack spacing={1}>
+                            <Button variant="soft" color="primary" onClick={() => setSearchParams({ add: '1' }, { replace: true })}>
+                                {t('ui.addAnotherAppleId')}
+                            </Button>
+                            <Button variant="outlined" color="danger" size="lg" onClick={handleLogout}>
+                                {t('ui.revokeLogin')}
+                            </Button>
+                        </Stack>
                     </CardContent>
                 </Card>
-                :
+            ) : null}
+
+            {showLoginForm ? (
                 <Card sx={{ width: '100%', maxWidth: 400, mt: 2 }}>
                     <CardContent>
                         <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 3 }}>
@@ -315,10 +474,11 @@ const AppleIdLogin = () => {
                             </>
                         )}
                     </CardContent>
-                </Card>}
+                </Card>
+            ) : null}
 
             {/* 常见问题折叠组件 */}
-            {!isAuthenticated && (
+            {showLoginForm && (
                 <Card sx={{ width: '100%', maxWidth: 400, mt: 2 }}>
                     <CardContent>
                         <Accordion expanded={expanded} onChange={(event, isExpanded) => setExpanded(isExpanded)}>

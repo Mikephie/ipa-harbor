@@ -4,10 +4,10 @@ const fs = require('fs');
 const path = require('path');
 const { parseIpaMetadata } = require('../ipa/metadata');
 const wsManager = require('../../utils/websocketServer');
+const { getAppleAccountHome, ipatoolEnvForAccount } = require('../../utils/appleAccount');
 
 // 配置
 const IPATOOL_PATH = path.join(__dirname, '../../bin/ipatool');
-const DATA_DIR = path.join(__dirname, '../../data');
 const MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT_DOWNLOADS) || 2;
 const { KEYCHAIN_PASSPHRASE } = require('../../config/keychain');
 const ENABLE_MORE_LOGS = process.env.ENABLE_MORE_LOGS === 'true';
@@ -29,10 +29,14 @@ class TaskManager {
         this.processQueue();
     }
 
+    accountDataDir(accountId) {
+        return getAppleAccountHome(accountId);
+    }
+
     // 创建新任务
-    createTask(appId, versionId, bundleId, actualVersionId = null) {
+    createTask(appId, versionId, bundleId, actualVersionId = null, accountId) {
         // 清理已存在的相同应用和版本的任务和文件
-        this.cleanupExistingTasks(appId, versionId);
+        this.cleanupExistingTasks(appId, versionId, accountId);
 
         const taskId = uuidv4();
         const task = {
@@ -41,6 +45,7 @@ class TaskManager {
             versionId,
             bundleId,
             actualVersionId: actualVersionId,
+            accountId,
             status: TASK_STATUS.PENDING,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
@@ -59,10 +64,10 @@ class TaskManager {
     }
 
     // 清理已存在的相同应用和版本的任务和文件
-    cleanupExistingTasks(appId, versionId) {
+    cleanupExistingTasks(appId, versionId, accountId) {
         // 查找所有相同appId和versionId的任务
         const existingTasks = Array.from(this.tasks.values()).filter(
-            task => task.appId === appId && task.versionId === versionId
+            task => task.appId === appId && task.versionId === versionId && task.accountId === accountId
         );
 
         if (existingTasks.length > 0) {
@@ -76,14 +81,15 @@ class TaskManager {
         }
 
         // 清理data目录中的相关文件
-        this.cleanupDataFiles(appId, versionId);
+        this.cleanupDataFiles(appId, versionId, accountId);
     }
 
     // 清理data目录中的相关文件
-    cleanupDataFiles(appId, versionId) {
+    cleanupDataFiles(appId, versionId, accountId) {
         try {
+            const dataDir = this.accountDataDir(accountId);
             // 确保data目录存在
-            if (!fs.existsSync(DATA_DIR)) {
+            if (!fs.existsSync(dataDir)) {
                 return;
             }
 
@@ -91,8 +97,8 @@ class TaskManager {
             const fileName = `${appId}_${versionId}.ipa`;
             const jsonFileName = `${appId}_${versionId}.json`;
 
-            const ipaPath = path.join(DATA_DIR, fileName);
-            const jsonPath = path.join(DATA_DIR, jsonFileName);
+            const ipaPath = path.join(dataDir, fileName);
+            const jsonPath = path.join(dataDir, jsonFileName);
 
             // 删除IPA文件
             if (fs.existsSync(ipaPath)) {
@@ -130,14 +136,15 @@ class TaskManager {
         task.status = TASK_STATUS.RUNNING;
         task.updatedAt = new Date().toISOString();
 
-        // 确保data目录存在
-        if (!fs.existsSync(DATA_DIR)) {
-            fs.mkdirSync(DATA_DIR, { recursive: true });
+        const dataDir = this.accountDataDir(task.accountId);
+        // 确保账号目录存在（与 ipatool HOME 一致，内含 .ipatool）
+        if (!fs.existsSync(dataDir)) {
+            fs.mkdirSync(dataDir, { recursive: true });
         }
 
         // 生成文件名
         const fileName = `${task.appId}_${task.versionId}.ipa`;
-        const filePath = path.join(DATA_DIR, fileName);
+        const filePath = path.join(dataDir, fileName);
 
         const command = [
             'download',
@@ -169,7 +176,9 @@ class TaskManager {
 
         console.log(`开始下载任务: ${taskId}`);
 
-        const process = spawn(IPATOOL_PATH, command);
+        const process = spawn(IPATOOL_PATH, command, {
+            env: ipatoolEnvForAccount(task.accountId),
+        });
         task.processId = process.pid;
         this.runningTasks.set(taskId, process);
 
@@ -294,7 +303,7 @@ class TaskManager {
                 console.log(`下载完成: ${taskId}, 文件: ${task.fileName}`);
 
                 // 自动解析metadata
-                this.parseMetadataAndBroadcast(task.fileName, taskId);
+                this.parseMetadataAndBroadcast(task.fileName, taskId, task.accountId);
             } else {
                 task.status = TASK_STATUS.FAILED;
 
@@ -368,7 +377,7 @@ class TaskManager {
 
         // 如果任务有对应的文件，删除文件
         if (task.fileName) {
-            this.deleteFilesByName(task.fileName);
+            this.deleteFilesByName(task.fileName, task.accountId);
         }
 
         // 清理进度文本
@@ -382,11 +391,11 @@ class TaskManager {
     }
 
     // 按文件名删除任务和文件
-    deleteByFileName(fileName) {
+    deleteByFileName(fileName, accountId) {
         try {
             // 查找所有匹配该文件名的任务
             const matchingTasks = Array.from(this.tasks.values()).filter(
-                task => task.fileName === fileName
+                task => task.fileName === fileName && task.accountId === accountId
             );
 
             // 删除所有匹配的任务
@@ -399,7 +408,7 @@ class TaskManager {
             });
 
             // 删除对应的文件
-            const fileDeleted = this.deleteFilesByName(fileName);
+            const fileDeleted = this.deleteFilesByName(fileName, accountId);
 
             if (fileDeleted || deletedTaskCount > 0) {
                 return {
@@ -423,33 +432,33 @@ class TaskManager {
         }
     }
 
-    // 清空所有任务和文件
-    clearAllTasks() {
+    // 清空所有任务和文件（仅当前 Apple 账号）
+    clearAllTasks(accountId) {
         try {
             let deletedTaskCount = 0;
 
-            // 停止所有正在运行的任务
-            for (const [taskId, process] of this.runningTasks.entries()) {
-                if (process && !process.killed) {
-                    process.kill('SIGTERM');
+            const accountTaskIds = Array.from(this.tasks.entries())
+                .filter(([, t]) => t.accountId === accountId)
+                .map(([id]) => id);
+
+            for (const taskId of accountTaskIds) {
+                const proc = this.runningTasks.get(taskId);
+                if (proc && !proc.killed) {
+                    proc.kill('SIGTERM');
                 }
                 this.runningTasks.delete(taskId);
+                const idx = this.queue.indexOf(taskId);
+                if (idx > -1) {
+                    this.queue.splice(idx, 1);
+                }
+                this.progressTexts.delete(taskId);
+                this.tasks.delete(taskId);
+                deletedTaskCount++;
             }
 
-            // 清空队列
-            this.queue.length = 0;
+            const filesDeleted = this.deleteAllFiles(accountId);
 
-            // 删除所有任务
-            deletedTaskCount = this.tasks.size;
-            this.tasks.clear();
-
-            // 清理所有进度文本
-            this.progressTexts.clear();
-
-            // 删除data目录下的所有ipa和json文件
-            const filesDeleted = this.deleteAllFiles();
-
-            console.log(`清空所有任务: 删除了 ${deletedTaskCount} 个任务和 ${filesDeleted} 个文件`);
+            console.log(`清空账号 ${accountId} 任务: 删除了 ${deletedTaskCount} 个任务和 ${filesDeleted} 个文件`);
 
             return {
                 success: true,
@@ -467,14 +476,15 @@ class TaskManager {
     }
 
     // 删除指定文件名的ipa和json文件
-    deleteFilesByName(fileName) {
+    deleteFilesByName(fileName, accountId) {
         try {
             let deleted = false;
+            const dataDir = this.accountDataDir(accountId);
 
             // 生成对应的文件路径
-            const ipaPath = path.join(DATA_DIR, fileName);
+            const ipaPath = path.join(dataDir, fileName);
             const jsonFileName = fileName.replace('.ipa', '.json');
-            const jsonPath = path.join(DATA_DIR, jsonFileName);
+            const jsonPath = path.join(dataDir, jsonFileName);
 
             // 删除IPA文件
             if (fs.existsSync(ipaPath)) {
@@ -491,7 +501,7 @@ class TaskManager {
             }
 
             // 删除ipa.tmp文件
-            const tmpPath = path.join(DATA_DIR, `${fileName}.tmp`);
+            const tmpPath = path.join(dataDir, `${fileName}.tmp`);
             if (fs.existsSync(tmpPath)) {
                 fs.unlinkSync(tmpPath);
                 console.log(`删除ipa.tmp文件: ${fileName}`);
@@ -505,19 +515,20 @@ class TaskManager {
         }
     }
 
-    // 删除data目录下的所有ipa和json文件
-    deleteAllFiles() {
+    // 删除账号目录下的所有ipa和json文件
+    deleteAllFiles(accountId) {
         try {
             let deletedCount = 0;
+            const dataDir = this.accountDataDir(accountId);
 
-            if (!fs.existsSync(DATA_DIR)) {
+            if (!fs.existsSync(dataDir)) {
                 return deletedCount;
             }
 
-            const files = fs.readdirSync(DATA_DIR);
+            const files = fs.readdirSync(dataDir);
 
             files.forEach(file => {
-                const filePath = path.join(DATA_DIR, file);
+                const filePath = path.join(dataDir, file);
                 const stats = fs.statSync(filePath);
 
                 // 只删除文件，不删除目录
@@ -536,10 +547,12 @@ class TaskManager {
     }
 
     // 获取任务列表
-    getTasks() {
-        return Array.from(this.tasks.values()).sort((a, b) =>
-            new Date(b.createdAt) - new Date(a.createdAt)
-        );
+    getTasks(accountId) {
+        return Array.from(this.tasks.values())
+            .filter(t => t.accountId === accountId)
+            .sort((a, b) =>
+                new Date(b.createdAt) - new Date(a.createdAt)
+            );
     }
 
     // 获取单个任务
@@ -548,11 +561,14 @@ class TaskManager {
     }
 
     // 获取实时进度信息
-    getProgress() {
+    getProgress(accountId) {
         const progressArray = [];
 
         // 遍历所有正在运行的任务
         for (const [taskId, task] of this.tasks.entries()) {
+            if (task.accountId !== accountId) {
+                continue;
+            }
             if (task.status === TASK_STATUS.RUNNING || task.status === TASK_STATUS.PENDING) {
                 const progressText = this.progressTexts.get(taskId) || '等待开始...';
                 progressArray.push({
@@ -570,16 +586,17 @@ class TaskManager {
     }
 
     // 获取文件列表
-    getFiles() {
+    getFiles(accountId) {
         try {
-            if (!fs.existsSync(DATA_DIR)) {
+            const dataDir = this.accountDataDir(accountId);
+            if (!fs.existsSync(dataDir)) {
                 return [];
             }
 
-            const files = fs.readdirSync(DATA_DIR)
+            const files = fs.readdirSync(dataDir)
                 .filter(file => file.endsWith('.ipa'))
                 .map(file => {
-                    const filePath = path.join(DATA_DIR, file);
+                    const filePath = path.join(dataDir, file);
                     const stats = fs.statSync(filePath);
 
                     // 基础文件信息
@@ -593,7 +610,7 @@ class TaskManager {
 
                     // 尝试读取对应的JSON metadata文件
                     const jsonFileName = file.replace('.ipa', '.json');
-                    const jsonFilePath = path.join(DATA_DIR, jsonFileName);
+                    const jsonFilePath = path.join(dataDir, jsonFileName);
 
                     if (fs.existsSync(jsonFilePath)) {
                         try {
@@ -628,10 +645,10 @@ class TaskManager {
     }
 
     // 解析metadata并广播
-    async parseMetadataAndBroadcast(fileName, taskId) {
+    async parseMetadataAndBroadcast(fileName, taskId, accountId) {
         try {
             console.log(`开始解析metadata: ${fileName}`);
-            const metadata = await parseIpaMetadata(fileName);
+            const metadata = await parseIpaMetadata(fileName, accountId);
 
             // 构建广播数据，格式与metadata接口返回一致
             const broadcastData = {
@@ -643,7 +660,7 @@ class TaskManager {
             };
 
             // 广播task-completed消息
-            wsManager.broadcastToDefault('task-completed', JSON.stringify(broadcastData));
+            wsManager.broadcastTaskEventToAppleAccount(accountId, 'task-completed', JSON.stringify(broadcastData));
 
             console.log(`metadata解析完成并已广播: ${fileName}`);
         } catch (error) {
@@ -658,7 +675,7 @@ class TaskManager {
                 fileName: fileName
             };
 
-            wsManager.broadcastToDefault('task-completed', JSON.stringify(errorData));
+            wsManager.broadcastTaskEventToAppleAccount(accountId, 'task-completed', JSON.stringify(errorData));
         }
     }
 }

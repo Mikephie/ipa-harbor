@@ -7,7 +7,7 @@ const ProgressParser = require('../../utils/progressParser');
 async function tasksHandler(req, res) {
     try {
         const taskManager = getTaskManager();
-        const tasks = taskManager.getTasks();
+        const tasks = taskManager.getTasks(req.appleAccountId);
 
         // 使用公共方法处理任务分组和进度信息
         const { groupedTasks, summary } = ProgressParser.processTasksWithProgress(tasks, taskManager.progressTexts);

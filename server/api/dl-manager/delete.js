@@ -10,9 +10,11 @@ async function deleteHandler(req, res) {
         const taskManager = getTaskManager();
         let result;
 
+        const accountId = req.appleAccountId;
+
         // 如果是清空所有任务
         if (clearAll) {
-            result = taskManager.clearAllTasks();
+            result = taskManager.clearAllTasks(accountId);
 
             if (result.success) {
                 return res.json({
@@ -34,7 +36,7 @@ async function deleteHandler(req, res) {
 
         // 如果提供了fileName，按文件名删除
         if (fileName) {
-            result = taskManager.deleteByFileName(fileName);
+            result = taskManager.deleteByFileName(fileName, accountId);
 
             if (result.success) {
                 return res.json({
@@ -56,6 +58,14 @@ async function deleteHandler(req, res) {
 
         // 如果提供了taskId，按任务ID删除
         if (taskId) {
+            const existing = taskManager.getTask(taskId);
+            if (!existing || existing.accountId !== accountId) {
+                return res.status(403).json({
+                    success: false,
+                    message: '无权操作该任务',
+                    error: 'Task does not belong to current Apple account',
+                });
+            }
             result = taskManager.deleteTask(taskId);
 
             if (result.success) {

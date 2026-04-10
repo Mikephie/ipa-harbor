@@ -42,6 +42,7 @@ export default function AppDetail({ app }) {
     const [activeTab, setActiveTab] = useState(0); // 管理tabs状态
 
     const { taskList, user } = useApp();
+    const accountId = user?.accountId;
 
     useEffect(() => {
         setActiveTab(0);
@@ -468,7 +469,7 @@ export default function AppDetail({ app }) {
                                 console.log(isFQDN, isSecureContext);
                                 // 只有isFQDN为true时，才提示用户，否则直接跳转
                                 if (forceDownload || !isSecureContext || !isFQDN) {
-                                    window.open(getAppDownloadPackageUrl(app.trackId, 'latest'), '_blank');
+                                    window.open(getAppDownloadPackageUrl(app.trackId, 'latest', accountId), '_blank');
                                     return;
                                 }
                                 Swal.fire({
@@ -479,7 +480,7 @@ export default function AppDetail({ app }) {
                                     showConfirmButton: false,
                                     html: `
       <div style="display:flex; justify-content:center; gap:12px; padding:1rem;">
-        <a href="${getAppInstallPackageUrl(app.trackId, 'latest')}"
+        <a href="${getAppInstallPackageUrl(app.trackId, 'latest', accountId)}"
         class="swal2-confirm swal2-styled"
            style="
              display:inline-block;
@@ -493,7 +494,7 @@ export default function AppDetail({ app }) {
            ${t('ui.install')}
         </a>
 
-        <a href="${getAppDownloadPackageUrl(app.trackId, 'latest')}"
+        <a href="${getAppDownloadPackageUrl(app.trackId, 'latest', accountId)}"
                   class="swal2-cancel swal2-styled"
  style="
              display:inline-block;
@@ -700,11 +701,11 @@ export default function AppDetail({ app }) {
                             </IconButton>
                             {/* 该功能是有问题的，暂时移除 */}
                             {/* <Tooltip variant="outlined" color="warning" arrow size="sm" title={<Typography>需要 https 环境下使用, 暂不支持 macOS 安装</Typography>}>
-                                <Link href={`${getAppInstallPackageUrl(app.trackId, version.versionId)}`}>
+                                <Link href={`${getAppInstallPackageUrl(app.trackId, version.versionId, accountId)}`}>
                                     <Button size="sm" color="success" startDecorator={<InstallMobile />}>安装</Button>
                                 </Link>
                             </Tooltip> */}
-                            <Link href={`${getAppDownloadPackageUrl(app.trackId, version.versionId)}`}>
+                            <Link href={`${getAppDownloadPackageUrl(app.trackId, version.versionId, accountId)}`}>
                                 {/* <Button size="sm" startDecorator={<Download />}>下载IPA</Button> */}
                                 <Button size="sm" startDecorator={<Download />}>{t('ui.downloadIPA')}</Button>
                             </Link>

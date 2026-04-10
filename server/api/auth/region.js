@@ -8,6 +8,7 @@ const path = require('path');
 // ipatool二进制文件路径
 const IPATOOL_PATH = path.join(__dirname, '../../bin/ipatool');
 const { KEYCHAIN_PASSPHRASE } = require('../../config/keychain');
+const { readAppleAccountIdFromRequest, ipatoolEnvForAccount } = require('../../utils/appleAccount');
 
 // 全局内存存储用户地区映射 { email: region }
 global.userRegions = global.userRegions || new Map();
@@ -15,11 +16,11 @@ global.userRegions = global.userRegions || new Map();
 /**
  * 执行ipatool命令获取用户信息
  */
-function getUserInfo() {
+function getUserInfo(execEnv) {
     return new Promise((resolve, reject) => {
         const command = `"${IPATOOL_PATH}" auth info --keychain-passphrase "${KEYCHAIN_PASSPHRASE}" --non-interactive --format "json"`;
 
-        exec(command, { timeout: 15000 }, (error, stdout, stderr) => {
+        exec(command, { timeout: 15000, ...execEnv }, (error, stdout, stderr) => {
             if (error) {
                 reject(new Error('Not authenticated'));
             } else {
@@ -43,10 +44,19 @@ async function handler(req, res) {
     }
 
     try {
+        const accountId = readAppleAccountIdFromRequest(req);
+        if (!accountId) {
+            return res.status(401).json({
+                success: false,
+                message: 'Not authenticated',
+            });
+        }
+        const execEnv = { env: ipatoolEnvForAccount(accountId) };
+
         // 从 ipatool 获取当前登录用户信息
         let userInfo;
         try {
-            userInfo = await getUserInfo();
+            userInfo = await getUserInfo(execEnv);
         } catch (error) {
             return res.status(401).json({
                 success: false,
@@ -66,13 +76,14 @@ async function handler(req, res) {
         // 如果 region 为空字符串或 null，则删除该用户的地区设置
         if (!region) {
             global.userRegions.delete(userInfo.email);
-            // 返回完整的用户信息（和 info 接口一样）
-            userInfo.region = null;
-            return res.json({
-                success: true,
-                message: 'Region cleared',
-                data: userInfo
-            });
+        // 返回完整的用户信息（和 info 接口一样）
+        userInfo.region = null;
+        userInfo.accountId = accountId;
+        return res.json({
+            success: true,
+            message: 'Region cleared',
+            data: userInfo
+        });
         }
 
         // 验证 region 格式（2位小写字母）
@@ -88,6 +99,7 @@ async function handler(req, res) {
 
         // 返回完整的用户信息（和 info 接口一样）
         userInfo.region = region;
+        userInfo.accountId = accountId;
         return res.json({
             success: true,
             message: 'Region updated successfully',

@@ -221,42 +221,61 @@ httpServer.listen(PORT, async () => {
 function startCronTasks() {
     const taskManager = getTaskManager();
 
-    // 每3秒广播文件列表 (watch类型)
+    // 每3秒广播文件列表 (watch类型)，按 Apple 账号隔离
     cron.schedule('*/3 * * * * *', () => {
         try {
-            const files = taskManager.getFiles();
-            const data = {
-                success: true,
-                data: {
-                    files: files,
-                    total: files.length,
-                    totalSize: files.reduce((sum, file) => sum + file.size, 0)
+            wsManager.broadcastToDownloadTaskPerAccount('watch', (accountId) => {
+                if (!accountId) {
+                    return {
+                        success: true,
+                        data: { files: [], total: 0, totalSize: 0 },
+                    };
                 }
-            };
-
-            wsManager.broadcastToDefault('watch', data);
+                const files = taskManager.getFiles(accountId);
+                return {
+                    success: true,
+                    data: {
+                        files,
+                        total: files.length,
+                        totalSize: files.reduce((sum, file) => sum + file.size, 0),
+                    },
+                };
+            });
         } catch (error) {
             console.error('广播文件列表失败:', error);
         }
     });
 
-    // 每2秒广播任务列表 (task-list类型)
+    // 每2秒广播任务列表 (task-list类型)，按 Apple 账号隔离
     cron.schedule('*/2 * * * * *', () => {
         try {
-            const tasks = taskManager.getTasks();
-
-            // 使用公共方法处理任务分组和进度信息
-            const { groupedTasks, summary } = ProgressParser.processTasksWithProgress(tasks, taskManager.progressTexts);
-
-            const data = {
-                success: true,
-                data: {
-                    ...groupedTasks,
-                    summary
+            wsManager.broadcastToDownloadTaskPerAccount('task-list', (accountId) => {
+                if (!accountId) {
+                    return {
+                        success: true,
+                        data: {
+                            running: [],
+                            pending: [],
+                            completed: [],
+                            failed: [],
+                            cancelled: [],
+                            summary: {},
+                        },
+                    };
                 }
-            };
-
-            wsManager.broadcastToDefault('task-list', data);
+                const tasks = taskManager.getTasks(accountId);
+                const { groupedTasks, summary } = ProgressParser.processTasksWithProgress(
+                    tasks,
+                    taskManager.progressTexts
+                );
+                return {
+                    success: true,
+                    data: {
+                        ...groupedTasks,
+                        summary,
+                    },
+                };
+            });
         } catch (error) {
             console.error('广播任务列表失败:', error);
         }

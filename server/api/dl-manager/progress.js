@@ -6,7 +6,7 @@ const { getTaskManager } = require('./taskManager');
 async function progressHandler(req, res) {
     try {
         const taskManager = getTaskManager();
-        const progress = taskManager.getProgress();
+        const progress = taskManager.getProgress(req.appleAccountId);
 
         return res.json({
             success: true,

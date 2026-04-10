@@ -3,15 +3,20 @@ const plist = require('plist');
 const bplist = require('bplist-parser');
 const fs = require('fs');
 const path = require('path');
+const { getAppleAccountHome, readAppleAccountIdFromRequest } = require('../../utils/appleAccount');
 
 /**
  * 解析IPA文件中的 iTunesMetadata.plist
  * @param {string} fileName - IPA文件名
+ * @param {string} accountId - Apple 账号目录 ID
  * @returns {Promise} 返回解析结果
  */
-function parseIpaMetadata(fileName) {
+function parseIpaMetadata(fileName, accountId) {
     return new Promise((resolve, reject) => {
-        const dataDir = path.join(__dirname, '../../data');
+        if (!accountId) {
+            return reject(new Error('缺少 accountId'));
+        }
+        const dataDir = getAppleAccountHome(accountId);
         const ipaPath = path.join(dataDir, fileName);
         const jsonPath = path.join(dataDir, fileName.replace('.ipa', '.json'));
 
@@ -124,6 +129,7 @@ function parseIpaMetadata(fileName) {
 async function metadataHandler(req, res) {
     try {
         const { fileName } = req.body;
+        const accountId = readAppleAccountIdFromRequest(req);
 
         // 参数验证
         if (!fileName) {
@@ -131,6 +137,14 @@ async function metadataHandler(req, res) {
                 success: false,
                 message: '文件名是必需的参数',
                 error: '请在请求体中提供fileName参数'
+            });
+        }
+
+        if (!accountId) {
+            return res.status(401).json({
+                success: false,
+                message: '请先登录 Apple 账号',
+                error: 'Apple account session required',
             });
         }
 
@@ -146,7 +160,7 @@ async function metadataHandler(req, res) {
         console.log(`开始解析IPA文件: ${fileName}`);
 
         try {
-            const metadata = await parseIpaMetadata(fileName);
+            const metadata = await parseIpaMetadata(fileName, accountId);
 
             // 直接返回解析后的JSON内容
             return res.json(metadata);

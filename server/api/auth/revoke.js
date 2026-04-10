@@ -4,15 +4,20 @@ const path = require('path');
 // ipatool二进制文件路径
 const IPATOOL_PATH = path.join(__dirname, '../../bin/ipatool');
 const { KEYCHAIN_PASSPHRASE } = require('../../config/keychain');
+const {
+    readAppleAccountIdFromRequest,
+    ipatoolEnvForAccount,
+    clearAppleAccountCookie,
+} = require('../../utils/appleAccount');
 
 /**
  * 执行ipatool命令的通用函数
  * @param {string} command - 要执行的命令
  * @returns {Promise} 返回Promise对象
  */
-function executeIpatool(command) {
+function executeIpatool(command, execOptions = {}) {
     return new Promise((resolve, reject) => {
-        exec(command, { timeout: 15000 }, (error, stdout, stderr) => {
+        exec(command, { timeout: 15000, ...execOptions }, (error, stdout, stderr) => {
             if (error) {
                 reject({
                     success: false,
@@ -45,15 +50,28 @@ function executeIpatool(command) {
  */
 async function revokeHandler(req, res) {
     try {
+        const accountId = readAppleAccountIdFromRequest(req);
+        if (!accountId) {
+            clearAppleAccountCookie(res);
+            return res.status(401).json({
+                success: false,
+                message: '用户未登录或认证信息已过期',
+                error: '没有可撤销的认证信息',
+            });
+        }
+
+        const execEnv = { env: ipatoolEnvForAccount(accountId) };
+
         // 构建ipatool revoke命令
         const command = `"${IPATOOL_PATH}" auth revoke --keychain-passphrase "${KEYCHAIN_PASSPHRASE}" --non-interactive --format "json"`;
 
         // console.log('执行撤销认证命令');
 
         try {
-            const result = await executeIpatool(command);
+            const result = await executeIpatool(command, execEnv);
 
             if (result.success) {
+                clearAppleAccountCookie(res);
                 return res.json({
                     success: true,
                     message: '撤销认证成功',
@@ -76,6 +94,7 @@ async function revokeHandler(req, res) {
                 execError.stderr.includes('authentication') ||
                 execError.stderr.includes('keychain')
             )) {
+                clearAppleAccountCookie(res);
                 return res.status(401).json({
                     success: false,
                     message: '用户未登录或认证信息已过期',

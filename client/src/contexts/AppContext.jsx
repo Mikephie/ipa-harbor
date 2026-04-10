@@ -102,6 +102,7 @@ export function AppProvider({ children }) {
     const reconnectTimeoutRef = useRef(null);
     const pingIntervalRef = useRef(null);
     const adminLoggedInRef = useRef(false);
+    const wsQuickReconnectRef = useRef(false);
     const { isLoggedIn: adminLoggedIn, loading: adminLoading } = useAdmin();
 
     // 更新管理员登录状态的ref
@@ -214,6 +215,20 @@ export function AppProvider({ children }) {
                 dispatch({ type: ActionTypes.SET_WS_CONNECTED, payload: false });
                 stopPing();
 
+                if (wsQuickReconnectRef.current) {
+                    wsQuickReconnectRef.current = false;
+                    if (reconnectTimeoutRef.current) {
+                        clearTimeout(reconnectTimeoutRef.current);
+                    }
+                    if (adminLoggedInRef.current) {
+                        reconnectTimeoutRef.current = setTimeout(() => {
+                            reconnectTimeoutRef.current = null;
+                            connectWebSocket();
+                        }, 50);
+                    }
+                    return;
+                }
+
                 // 只有在管理员仍然登录时才尝试重连
                 if (!reconnectTimeoutRef.current && adminLoggedInRef.current) {
                     dispatch({ type: ActionTypes.SET_WS_RECONNECTING, payload: true });
@@ -273,6 +288,17 @@ export function AppProvider({ children }) {
         }
     };
 
+    /** 切换 Apple 账号后需重连 WS，否则仍按旧 Cookie 推送任务列表 */
+    const reconnectDownloadWebSocket = () => {
+        if (reconnectTimeoutRef.current) {
+            clearTimeout(reconnectTimeoutRef.current);
+            reconnectTimeoutRef.current = null;
+        }
+        dispatch({ type: ActionTypes.SET_WS_RECONNECTING, payload: false });
+        wsQuickReconnectRef.current = true;
+        disconnectWebSocket();
+    };
+
     useEffect(() => {
         // 只有在管理员已登录且不在加载状态时才执行
         if (!adminLoading && adminLoggedIn) {
@@ -302,7 +328,8 @@ export function AppProvider({ children }) {
         refreshUser,
         checkAuthStatus,
         connectWebSocket,
-        disconnectWebSocket
+        disconnectWebSocket,
+        reconnectDownloadWebSocket,
     };
 
     return (

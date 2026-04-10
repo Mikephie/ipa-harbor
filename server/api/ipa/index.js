@@ -10,15 +10,23 @@ const { metadataHandler, parseIpaMetadata } = require('./metadata');
 
 const IPATOOL_PATH = path.join(__dirname, '../../bin/ipatool');
 const { KEYCHAIN_PASSPHRASE } = require('../../config/keychain');
+const {
+    readAppleAccountIdFromRequest,
+    ipatoolEnvForAccount,
+    getAppleAccountHome,
+    LEGACY_FLAT_DATA_DIR,
+} = require('../../utils/appleAccount');
 
 /**
- * 获取当前用户的地区设置
+ * 获取当前用户的地区设置（按请求中的 Apple 账号 cookie）
  */
-async function getUserRegion() {
+async function getUserRegion(req) {
     return new Promise((resolve) => {
+        const accountId = req ? readAppleAccountIdFromRequest(req) : null;
         const command = `"${IPATOOL_PATH}" auth info --keychain-passphrase "${KEYCHAIN_PASSPHRASE}" --non-interactive --format "json"`;
+        const execOpts = accountId ? { timeout: 15000, env: ipatoolEnvForAccount(accountId) } : { timeout: 15000 };
 
-        exec(command, { timeout: 15000 }, (error, stdout, stderr) => {
+        exec(command, execOpts, (error, stdout, stderr) => {
             if (error) {
                 resolve(null);
             } else {
@@ -85,19 +93,23 @@ async function getAppIconUrls(appId, userRegion = null) {
 // 路由定义
 router.post('/metadata', metadataHandler);  // 解析IPA元数据
 
+function resolveIpaPath(fileName, accountId) {
+    const ipaFileName = fileName.endsWith('.ipa') ? fileName : `${fileName}.ipa`;
+    const base = accountId ? getAppleAccountHome(accountId) : LEGACY_FLAT_DATA_DIR;
+    return { ipaFileName, ipaPath: path.join(base, ipaFileName) };
+}
+
 // 生成manifest.plist文件用于无线安装 (目前有问题，貌似不可用)
-router.get('/install-package/:fileName/manifest.plist', async (req, res) => {
+router.get('/install-package/:accountId/:fileName/manifest.plist', async (req, res) => {
     try {
-        const { fileName } = req.params;
+        const { fileName, accountId } = req.params;
 
         // 验证文件名格式 (应该是 appId_versionId 格式)
         if (!fileName || !fileName.includes('_')) {
             return res.status(400).send('Invalid file name format');
         }
 
-        const ipaFileName = `${fileName}.ipa`;
-        const dataDir = path.join(__dirname, '../../data');
-        const ipaPath = path.join(dataDir, ipaFileName);
+        const { ipaFileName, ipaPath } = resolveIpaPath(fileName, accountId);
 
         // 检查IPA文件是否存在
         if (!fs.existsSync(ipaPath)) {
@@ -106,7 +118,7 @@ router.get('/install-package/:fileName/manifest.plist', async (req, res) => {
 
         try {
             // 解析IPA元数据
-            const metadata = await parseIpaMetadata(ipaFileName);
+            const metadata = await parseIpaMetadata(ipaFileName, accountId);
 
             // 提取所需信息
             const bundleIdentifier = metadata.softwareVersionBundleId || 'unknown.bundle.id';
@@ -118,7 +130,7 @@ router.get('/install-package/:fileName/manifest.plist', async (req, res) => {
             const appId = fileName.split('_')[0];
 
             // 获取用户地区设置
-            const userRegion = await getUserRegion();
+            const userRegion = await getUserRegion(req);
 
             // 获取图标URL
             const iconUrls = await getAppIconUrls(appId, userRegion);
@@ -127,7 +139,7 @@ router.get('/install-package/:fileName/manifest.plist', async (req, res) => {
 
             // 构建IPA下载URL
             const host = req.get('host');
-            const ipaUrl = `https://${host}/v1/ipa/getpackage/${fileName}.ipa`; // 必须https
+            const ipaUrl = `https://${host}/v1/ipa/getpackage/${accountId}/${ipaFileName}`; // 必须https
             console.log(
                 'ipaUrl', ipaUrl,
                 'iconUrl57', iconUrl57,
@@ -190,15 +202,15 @@ router.get('/install-package/:fileName/manifest.plist', async (req, res) => {
     }
 });
 
-router.get('/getpackage/:fileName', (req, res) => {
-    const { fileName } = req.params;
+// 新：按账号目录下载 IPA
+router.get('/getpackage/:accountId/:fileName', (req, res) => {
+    const { fileName, accountId } = req.params;
 
     if (!fileName) {
         return res.status(400).send('fileName parameter is required');
     }
 
-    const dataDir = path.join(__dirname, '../../data');
-    const filePath = path.join(dataDir, fileName);
+    const { ipaPath: filePath } = resolveIpaPath(fileName, accountId);
 
     // 检查文件是否存在
     if (!fs.existsSync(filePath)) {
@@ -231,6 +243,57 @@ router.get('/getpackage/:fileName', (req, res) => {
     const chunkSize = end - start + 1;
     const fileStream = fs.createReadStream(filePath, { start, end });
 
+
+    res.writeHead(206, {
+        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunkSize,
+        'Content-Type': 'application/octet-stream',
+        'Content-Disposition': `attachment; filename="app.ipa"`,
+    });
+
+    fileStream.pipe(res);
+});
+
+// 兼容旧路径：仅查找 data 根目录（升级前下载的文件）
+router.get('/getpackage/:fileName', (req, res) => {
+    const { fileName } = req.params;
+
+    if (!fileName) {
+        return res.status(400).send('fileName parameter is required');
+    }
+
+    const filePath = path.join(LEGACY_FLAT_DATA_DIR, fileName);
+
+    if (!fs.existsSync(filePath)) {
+        return res.status(404).send('File not found');
+    }
+
+    const stat = fs.statSync(filePath);
+    const fileSize = stat.size;
+    const range = req.headers.range;
+
+    if (!range) {
+        res.writeHead(200, {
+            'Content-Length': fileSize,
+            'Content-Type': 'application/octet-stream',
+            'Content-Disposition': `attachment; filename="app.ipa"`,
+        });
+        fs.createReadStream(filePath).pipe(res);
+        return;
+    }
+
+    const parts = range.replace(/bytes=/, '').split('-');
+    const start = parseInt(parts[0], 10);
+    const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+
+    if (start >= fileSize || end >= fileSize) {
+        res.status(416).send('Requested range not satisfiable');
+        return;
+    }
+
+    const chunkSize = end - start + 1;
+    const fileStream = fs.createReadStream(filePath, { start, end });
 
     res.writeHead(206, {
         'Content-Range': `bytes ${start}-${end}/${fileSize}`,

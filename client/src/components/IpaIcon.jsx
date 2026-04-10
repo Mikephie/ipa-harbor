@@ -8,6 +8,7 @@ import Swal from 'sweetalert2';
 import formatFileSize from '../utils/formatFileSize.js';
 import { Close as CloseIcon, Download as DownloadIcon } from '@mui/icons-material';
 import { useTranslation } from 'react-i18next';
+import { useApp } from '../contexts/AppContext';
 
 function AppIcon({ appId, size = 128, disabled = false }) {
     const [loaded, setLoaded] = useState(false);
@@ -76,6 +77,8 @@ function AppIcon({ appId, size = 128, disabled = false }) {
 
 export default function IpaIcon({ item, size = 128, isDragging = false }) {
     const { t } = useTranslation();
+    const { user } = useApp();
+    const accountId = user?.accountId;
     const [drawerOpen, setDrawerOpen] = useState(false);
     const {
         id: appId,
@@ -406,7 +409,16 @@ export default function IpaIcon({ item, size = 128, isDragging = false }) {
     const handleDownload = (e) => {
         e.stopPropagation();
         const [appId, version] = name.replace(/\.ipa$/, '').split('_');
-        window.open(getAppDownloadPackageUrl(appId, version), '_blank');
+        const url = getAppDownloadPackageUrl(appId, version, accountId);
+        if (!url) {
+            Swal.fire({
+                icon: 'warning',
+                title: t('ui.appleIdLogin'),
+                confirmButtonText: t('ui.confirm'),
+            });
+            return;
+        }
+        window.open(url, '_blank');
     };
 
     const tooltipTitle = tooltipContent && (

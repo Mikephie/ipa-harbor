@@ -24,7 +24,7 @@ async function downloadHandler(req, res) {
         if (versionId === 'latest') {
             console.log(`[DEBUG] 检测到latest版本请求，获取应用 ${appId} 的实际最新版本ID`);
             try {
-                const latestId = await getLatestVersionId(appId);
+                const latestId = await getLatestVersionId(appId, req.appleAccountId);
                 if (latestId) {
                     actualVersionId = latestId;
                     console.log(`[DEBUG] 应用 ${appId} 的实际最新版本ID: ${actualVersionId}`);
@@ -39,7 +39,7 @@ async function downloadHandler(req, res) {
 
         // 创建下载任务
         const taskManager = getTaskManager();
-        const taskId = taskManager.createTask(appId, versionId, bundleId, actualVersionId);
+        const taskId = taskManager.createTask(appId, versionId, bundleId, actualVersionId, req.appleAccountId);
 
         return res.json({
             success: true,

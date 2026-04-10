@@ -5,13 +5,17 @@ const path = require('path');
 // ipatool二进制文件路径
 const IPATOOL_PATH = path.join(__dirname, '../../bin/ipatool');
 const { KEYCHAIN_PASSPHRASE } = require('../../config/keychain');
+const { ipatoolEnvForAccount } = require('../../utils/appleAccount');
 
 /**
  * 执行ipatool命令获取用户信息
  */
-function executeIpatool(command) {
+function executeIpatool(command, accountId) {
     return new Promise((resolve, reject) => {
-        exec(command, { timeout: 15000 }, (error, stdout, stderr) => {
+        exec(command, {
+            timeout: 15000,
+            env: ipatoolEnvForAccount(accountId),
+        }, (error, stdout, stderr) => {
             if (error) {
                 reject(error);
             } else {
@@ -65,7 +69,7 @@ async function detailsHandler(req, res) {
         let userRegion = null;
         try {
             const infoCommand = `"${IPATOOL_PATH}" auth info --keychain-passphrase "${KEYCHAIN_PASSPHRASE}" --non-interactive --format "json"`;
-            const infoResult = await executeIpatool(infoCommand);
+            const infoResult = await executeIpatool(infoCommand, req.appleAccountId);
             if (infoResult.success && infoResult.data?.email) {
                 userRegion = global.userRegions?.get(infoResult.data.email);
             }

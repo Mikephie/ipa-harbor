@@ -1,6 +1,7 @@
 const WebSocket = require('ws');
 const { verifyToken } = require('../middleware/auth');
 const database = require('./database');
+const { isValidAppleAccountId, COOKIE_NAME } = require('./appleAccount');
 
 class WebSocketManager {
     constructor() {
@@ -140,6 +141,10 @@ class WebSocketManager {
             }
             this.servers.get(path).add(ws);
 
+            const cookies = this.parseCookies(req.headers.cookie);
+            const rawApple = cookies[COOKIE_NAME];
+            ws.appleAccountId = isValidAppleAccountId(rawApple) ? rawApple : null;
+
             // 发送连接成功消息
             ws.send(JSON.stringify({
                 type: 'system',
@@ -210,6 +215,36 @@ class WebSocketManager {
     // 广播到默认路径 /download-task
     broadcastToDefault(type, data) {
         this.broadcast('/download-task', type, data);
+    }
+
+    /**
+     * 向 /download-task 的每个连接单独发送 payload（按 Apple 账号隔离）
+     * @param {string} type - 消息类型
+     * @param {(accountId: string|null) => any} buildPayload - 根据连接的 appleAccountId 生成 data
+     */
+    broadcastToDownloadTaskPerAccount(type, buildPayload) {
+        const clients = this.servers.get('/download-task');
+        if (!clients || clients.size === 0) return;
+
+        for (const client of clients) {
+            if (client.readyState !== WebSocket.OPEN) continue;
+            const data = buildPayload(client.appleAccountId ?? null);
+            client.send(JSON.stringify({ type, data }));
+        }
+    }
+
+    /** 仅向持有指定 Apple 账号会话的连接推送（如任务完成） */
+    broadcastTaskEventToAppleAccount(accountId, type, data) {
+        if (!accountId) return;
+        const clients = this.servers.get('/download-task');
+        if (!clients || clients.size === 0) return;
+
+        const message = JSON.stringify({ type, data });
+        for (const client of clients) {
+            if (client.readyState === WebSocket.OPEN && client.appleAccountId === accountId) {
+                client.send(message);
+            }
+        }
     }
 }
 

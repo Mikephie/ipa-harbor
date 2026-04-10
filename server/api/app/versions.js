@@ -5,19 +5,24 @@ const https = require('https');
 // ipatool二进制文件路径
 const IPATOOL_PATH = path.join(__dirname, '../../bin/ipatool');
 const { KEYCHAIN_PASSPHRASE } = require('../../config/keychain');
+const { ipatoolEnvForAccount } = require('../../utils/appleAccount');
 
 /**
  * 执行ipatool命令的通用函数（带重试机制）
  * @param {string} command - 要执行的命令
+ * @param {string} accountId - Apple 账号目录 ID
  * @param {number} maxRetries - 最大重试次数，默认为2
  * @param {number} currentAttempt - 当前尝试次数，默认为1
  * @returns {Promise} 返回Promise对象
  */
-function executeIpatool(command, maxRetries = 2, currentAttempt = 1) {
+function executeIpatool(command, accountId, maxRetries = 2, currentAttempt = 1) {
     return new Promise((resolve, reject) => {
         // console.log(`[DEBUG] 执行ipatool命令 (尝试 ${currentAttempt}/${maxRetries + 1}): ${command}`);
 
-        exec(command, { timeout: 30000 }, (error, stdout, stderr) => {
+        exec(command, {
+            timeout: 30000,
+            env: ipatoolEnvForAccount(accountId),
+        }, (error, stdout, stderr) => {
             if (error) {
                 const errorInfo = {
                     success: false,
@@ -67,7 +72,7 @@ function executeIpatool(command, maxRetries = 2, currentAttempt = 1) {
 
                     // 延迟1秒后重试
                     setTimeout(() => {
-                        executeIpatool(command, maxRetries, currentAttempt + 1)
+                        executeIpatool(command, accountId, maxRetries, currentAttempt + 1)
                             .then(resolve)
                             .catch(reject);
                     }, 1000);
@@ -208,7 +213,7 @@ async function versionsHandler(req, res) {
 
                 // 同时请求ipatool和第三方API（原有逻辑）
                 const [ipatoolResult, versionHistory] = await Promise.all([
-                    executeIpatool(command),
+                    executeIpatool(command, req.appleAccountId),
                     fetchVersionHistory(appId)
                 ]);
 
@@ -323,16 +328,20 @@ async function versionsHandler(req, res) {
 /**
  * 获取应用最新版本ID的（仅用于内部调用）
  * @param {number} appId - 应用ID
+ * @param {string} accountId - Apple 账号目录 ID
  * @returns {Promise<string|null>} 返回最新版本ID或null
  */
-async function getLatestVersionId(appId) {
+async function getLatestVersionId(appId, accountId) {
     try {
+        if (!accountId) {
+            return null;
+        }
         // 构建ipatool list-versions命令
         const command = `"${IPATOOL_PATH}" list-versions -i "${appId}" --keychain-passphrase "${KEYCHAIN_PASSPHRASE}" --non-interactive --format "json"`;
 
         // console.log(`[DEBUG] 获取最新版本ID命令: ${command}`);
 
-        const ipatoolResult = await executeIpatool(command);
+        const ipatoolResult = await executeIpatool(command, accountId);
 
         if (ipatoolResult.success && ipatoolResult.data) {
             // 获取版本ID数组并反转（最新的在最后）

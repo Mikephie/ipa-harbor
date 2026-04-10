@@ -103,6 +103,35 @@ export async function login(email, password, twoFactor = null) {
 }
 
 /**
+ * 本机已保存的 Apple 账号列表
+ */
+export async function listAppleAccounts() {
+    return apiRequest('/v1/auth/accounts', {
+        method: 'GET',
+    });
+}
+
+/**
+ * 切换到已保存会话的账号（无需密码）
+ */
+export async function switchAppleAccount(accountId) {
+    return apiRequest('/v1/auth/switch', {
+        method: 'POST',
+        body: JSON.stringify({ accountId }),
+    });
+}
+
+/**
+ * 从本机删除某账号目录（撤销会话并删除 IPA 等数据）
+ */
+export async function removeAppleAccount(accountId) {
+    return apiRequest('/v1/auth/account/remove', {
+        method: 'POST',
+        body: JSON.stringify({ accountId }),
+    });
+}
+
+/**
  * 搜索应用
  * @param {string} keyword - 搜索关键词
  * @param {number} limit - 搜索结果数量限制
@@ -203,17 +232,23 @@ export async function clearAllTasks() {
  * @param {number} appId - 应用ID
  * @param {string} versionId - 版本ID
  */
-export function getAppInstallPackageUrl(appId, versionId) {
-    return `itms-services://?action=download-manifest&url=${API_BASE_URL}/v1/ipa/install-package/${appId}_${versionId}/manifest.plist`;
+/**
+ * @param {string} accountId - 当前 Apple 账号目录 ID（来自 /v1/auth/info）
+ */
+export function getAppInstallPackageUrl(appId, versionId, accountId) {
+    if (!accountId) return '';
+    return `itms-services://?action=download-manifest&url=${API_BASE_URL}/v1/ipa/install-package/${accountId}/${appId}_${versionId}/manifest.plist`;
 }
 
 /**
  * 获取应用下载包URL
  * @param {number} appId - 应用ID
  * @param {string} versionId - 版本ID
+ * @param {string} accountId - 当前 Apple 账号目录 ID
  */
-export function getAppDownloadPackageUrl(appId, versionId) {
-    return `${API_BASE_URL}/v1/ipa/getpackage/${appId}_${versionId}.ipa`;
+export function getAppDownloadPackageUrl(appId, versionId, accountId) {
+    if (!accountId) return '';
+    return `${API_BASE_URL}/v1/ipa/getpackage/${accountId}/${appId}_${versionId}.ipa`;
 }
 
 // ===== 管理员认证相关API =====

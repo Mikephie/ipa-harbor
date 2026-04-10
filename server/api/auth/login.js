@@ -4,6 +4,12 @@ const path = require('path');
 // ipatool二进制文件路径
 const IPATOOL_PATH = path.join(__dirname, '../../bin/ipatool');
 const { KEYCHAIN_PASSPHRASE } = require('../../config/keychain');
+const {
+    appleAccountIdFromEmail,
+    setAppleAccountCookie,
+    ipatoolEnvForAccount,
+    writeAccountMeta,
+} = require('../../utils/appleAccount');
 
 function isTwoFactorRequired(output = '') {
     if (!output || typeof output !== 'string') {
@@ -39,9 +45,9 @@ function parseJsonSafely(content = '') {
  * @param {string} command - 要执行的命令
  * @returns {Promise} 返回Promise对象
  */
-function executeIpatool(command) {
+function executeIpatool(command, execOptions = {}) {
     return new Promise((resolve, reject) => {
-        exec(command, { timeout: 30000 }, (error, stdout, stderr) => {
+        exec(command, { timeout: 30000, ...execOptions }, (error, stdout, stderr) => {
             const jsonStdout = parseJsonSafely(stdout);
             const jsonStderr = parseJsonSafely(stderr);
             const combinedOutput = `${stdout || ''}\n${stderr || ''}`;
@@ -106,6 +112,9 @@ async function loginHandler(req, res) {
             });
         }
 
+        const accountId = appleAccountIdFromEmail(email);
+        const execEnv = { env: ipatoolEnvForAccount(accountId) };
+
         // 构建ipatool命令
         let command = `"${IPATOOL_PATH}" auth login -e "${email}" -p "${password}" --keychain-passphrase "${KEYCHAIN_PASSPHRASE}" --non-interactive --format "json"`;
 
@@ -119,7 +128,7 @@ async function loginHandler(req, res) {
         // console.log(`执行登录命令: ${command.replace(password, '***').replace(twoFactor || '', '***')}`);
 
         try {
-            const result = await executeIpatool(command);
+            const result = await executeIpatool(command, execEnv);
 
             if (result.success) {
                 // 检查返回的数据中是否包含2FA要求
@@ -142,28 +151,36 @@ async function loginHandler(req, res) {
                 const infoCommand = `"${IPATOOL_PATH}" auth info --keychain-passphrase "${KEYCHAIN_PASSPHRASE}" --non-interactive --format "json"`;
 
                 try {
-                    const infoResult = await executeIpatool(infoCommand);
+                    const infoResult = await executeIpatool(infoCommand, execEnv);
 
                     if (infoResult.success) {
+                        setAppleAccountCookie(res, accountId);
+                        writeAccountMeta(accountId, {
+                            email: infoResult.data?.email || email,
+                        });
                         return res.json({
                             success: true,
                             message: '登录成功',
-                            data: infoResult.data
+                            data: { ...infoResult.data, accountId }
                         });
                     } else {
+                        setAppleAccountCookie(res, accountId);
+                        writeAccountMeta(accountId, { email });
                         // 登录成功但获取信息失败
                         return res.json({
                             success: true,
                             message: '登录成功，但获取用户信息失败',
-                            data: result.data || result.rawOutput
+                            data: { ...(typeof result.data === 'object' && result.data ? result.data : {}), accountId }
                         });
                     }
                 } catch (infoError) {
+                    setAppleAccountCookie(res, accountId);
+                    writeAccountMeta(accountId, { email });
                     // 登录成功但获取信息出错
                     return res.json({
                         success: true,
                         message: '登录成功，但获取用户信息时出错',
-                        data: result.data || result.rawOutput
+                        data: { ...(typeof result.data === 'object' && result.data ? result.data : {}), accountId }
                     });
                 }
             } else if (result.needsTwoFactor) {
