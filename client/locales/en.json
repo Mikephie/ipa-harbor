@@ -198,6 +198,8 @@
         "refetchVersionList": "Refetch Version List",
         "releaseDateUnknown": "Release date unknown",
         "installOrDownload": "Install app or download IPA file?",
+        "otaInstallHint": "Use Safari on iPhone/iPad with HTTPS and a valid domain for over-the-air install",
+        "otaInstallRequiresHttps": "This page is not suitable for OTA install; opening will download the IPA instead",
         "pleaseSelect": "Please select",
         "dateFormatError": "Date format error",
         "footer": "An open-source IPA visual web management tool based on ipatool",

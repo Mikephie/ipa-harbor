@@ -198,6 +198,8 @@
         "refetchVersionList": "重新获取版本列表",
         "releaseDateUnknown": "发布日期未知",
         "installOrDownload": "请问是下载 IPA 档案还是安装应用",
+        "otaInstallHint": "使用 iPhone/iPad 的 Safari、HTTPS 与有效域名时可无线安装到设备",
+        "otaInstallRequiresHttps": "当前页面非 HTTPS 或域名不符合 OTA 要求，将改为下载 IPA",
         "pleaseSelect": "请选择",
         "dateFormatError": "日期格式错误",
         "footer": "一个基于 ipatool 的开源 IPA 可视化 Web 管理工具",

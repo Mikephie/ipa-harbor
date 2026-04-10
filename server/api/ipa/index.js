@@ -99,7 +99,23 @@ function resolveIpaPath(fileName, accountId) {
     return { ipaFileName, ipaPath: path.join(base, ipaFileName) };
 }
 
-// 生成manifest.plist文件用于无线安装 (目前有问题，貌似不可用)
+function escapeXml(text) {
+    if (text == null || text === '') return '';
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+}
+
+/** 反代后的公网 Host（OTA 清单里的 IPA URL 须与设备可访问的 TLS 主机一致） */
+function publicHostForOta(req) {
+    const raw = req.get('x-forwarded-host') || req.get('host') || '';
+    return raw.split(',')[0].trim();
+}
+
+// 生成 manifest.plist 用于 iOS 无线安装（需 HTTPS 与有效证书）
 router.get('/install-package/:accountId/:fileName/manifest.plist', async (req, res) => {
     try {
         const { fileName, accountId } = req.params;
@@ -122,10 +138,8 @@ router.get('/install-package/:accountId/:fileName/manifest.plist', async (req, r
 
             // 提取所需信息
             const bundleIdentifier = metadata.softwareVersionBundleId || 'unknown.bundle.id';
-            const kind = metadata.kind || 'full';
             const bundleVersion = metadata.bundleShortVersionString || metadata.bundleVersion || '1.0.0';
             const appName = metadata.itemName || metadata.playlistName || 'Unknown App';
-            const developerName = metadata.playlistName || 'Unknown Developer';
             // 从文件名中提取appId
             const appId = fileName.split('_')[0];
 
@@ -137,15 +151,38 @@ router.get('/install-package/:accountId/:fileName/manifest.plist', async (req, r
             const iconUrl57 = metadata.softwareIcon57x57URL || iconUrls.iconUrl60 || '';
             const iconUrl512 = iconUrls.iconUrl512 || '';
 
-            // 构建IPA下载URL
-            const host = req.get('host');
-            const ipaUrl = `https://${host}/v1/ipa/getpackage/${accountId}/${ipaFileName}`; // 必须https
-            console.log(
-                'ipaUrl', ipaUrl,
-                'iconUrl57', iconUrl57,
-                'iconUrl512', iconUrl512,
-            )
-            // 生成manifest.plist内容
+            const host = publicHostForOta(req);
+            if (!host) {
+                return res.status(500).send('Cannot determine public host');
+            }
+            // iOS OTA 要求 IPA 与清单均为 HTTPS
+            const ipaUrl = `https://${host}/v1/ipa/getpackage/${accountId}/${ipaFileName}`;
+            const ipaSize = fs.statSync(ipaPath).size;
+
+            const assetBlocks = [];
+            assetBlocks.push(`                <dict>
+                    <key>kind</key>
+                    <string>software-package</string>
+                    <key>url</key>
+                    <string>${escapeXml(ipaUrl)}</string>
+                </dict>`);
+            if (iconUrl57) {
+                assetBlocks.push(`                <dict>
+                    <key>kind</key>
+                    <string>display-image</string>
+                    <key>url</key>
+                    <string>${escapeXml(iconUrl57)}</string>
+                </dict>`);
+            }
+            if (iconUrl512) {
+                assetBlocks.push(`                <dict>
+                    <key>kind</key>
+                    <string>full-size-image</string>
+                    <key>url</key>
+                    <string>${escapeXml(iconUrl512)}</string>
+                </dict>`);
+            }
+
             const manifestContent = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -155,40 +192,27 @@ router.get('/install-package/:accountId/:fileName/manifest.plist', async (req, r
         <dict>
             <key>assets</key>
             <array>
-                <dict>
-                    <key>kind</key>
-                    <string>display-image</string>
-                    <key>url</key>
-                    <string>${iconUrl512}</string>
-                </dict>
-                <dict>
-                    <key>kind</key>
-                    <string>software-package</string>
-                    <key>url</key>
-                    <string>${ipaUrl}</string>
-                </dict>
+${assetBlocks.join('\n')}
             </array>
             <key>metadata</key>
             <dict>
                 <key>bundle-identifier</key>
-                <string>${bundleIdentifier}</string>
+                <string>${escapeXml(bundleIdentifier)}</string>
                 <key>bundle-version</key>
-                <string>${bundleVersion}</string>
-                <key>developer-name</key>
-                <string>${developerName}</string>
+                <string>${escapeXml(bundleVersion)}</string>
                 <key>kind</key>
-                <string>${kind}</string>
+                <string>software</string>
                 <key>title</key>
-                <string>${appName}</string>
+                <string>${escapeXml(appName)}</string>
+                <key>size-in-bytes</key>
+                <integer>${ipaSize}</integer>
             </dict>
         </dict>
     </array>
 </dict>
 </plist>`;
 
-            // 设置正确的Content-Type和文件名
-            res.setHeader('Content-Type', 'text/xml');
-            res.setHeader('Content-Disposition', `attachment; filename="manifest.plist"`);
+            res.setHeader('Content-Type', 'application/xml; charset=utf-8');
             res.send(manifestContent);
 
         } catch (metadataError) {

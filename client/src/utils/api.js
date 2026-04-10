@@ -237,7 +237,8 @@ export async function clearAllTasks() {
  */
 export function getAppInstallPackageUrl(appId, versionId, accountId) {
     if (!accountId) return '';
-    return `itms-services://?action=download-manifest&url=${API_BASE_URL}/v1/ipa/install-package/${accountId}/${appId}_${versionId}/manifest.plist`;
+    const manifestUrl = `${API_BASE_URL}/v1/ipa/install-package/${accountId}/${appId}_${versionId}/manifest.plist`;
+    return `itms-services://?action=download-manifest&url=${encodeURIComponent(manifestUrl)}`;
 }
 
 /**

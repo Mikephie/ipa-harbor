@@ -4,9 +4,10 @@ import {
     Drawer, Button, DialogTitle, DialogContent, ModalClose, Sheet
 } from '@mui/joy';
 import { getAppIconUrl, getAppDownloadPackageUrl, deleteTask, downloadApp } from '../utils/api';
+import { openInstallOrDownloadChoice, isOtaInstallAvailable } from '../utils/otaInstall';
 import Swal from 'sweetalert2';
 import formatFileSize from '../utils/formatFileSize.js';
-import { Close as CloseIcon, Download as DownloadIcon } from '@mui/icons-material';
+import { Close as CloseIcon, Download as DownloadIcon, InstallMobile as InstallMobileIcon } from '@mui/icons-material';
 import { useTranslation } from 'react-i18next';
 import { useApp } from '../contexts/AppContext';
 
@@ -406,10 +407,16 @@ export default function IpaIcon({ item, size = 128, isDragging = false }) {
         }
     };
 
+    const resolveTrackAndVersion = () => {
+        const trackId = finalAppId;
+        const vid = versionId != null && versionId !== '' ? versionId : 'latest';
+        return { trackId, versionId: vid };
+    };
+
     const handleDownload = (e) => {
         e.stopPropagation();
-        const [appId, version] = name.replace(/\.ipa$/, '').split('_');
-        const url = getAppDownloadPackageUrl(appId, version, accountId);
+        const { trackId, versionId: vid } = resolveTrackAndVersion();
+        const url = getAppDownloadPackageUrl(trackId, vid, accountId);
         if (!url) {
             Swal.fire({
                 icon: 'warning',
@@ -420,6 +427,23 @@ export default function IpaIcon({ item, size = 128, isDragging = false }) {
         }
         window.open(url, '_blank');
     };
+
+    const handleInstallOrOta = (e) => {
+        e.stopPropagation();
+        const { trackId, versionId: vid } = resolveTrackAndVersion();
+        if (!trackId) {
+            Swal.fire({
+                icon: 'error',
+                title: t('ui.retryFailed'),
+                text: t('ui.cannotGetAppId'),
+                confirmButtonText: t('ui.confirm'),
+            });
+            return;
+        }
+        openInstallOrDownloadChoice({ trackId, versionId: vid, accountId, t });
+    };
+
+    const otaInstallAvailable = isOtaInstallAvailable();
 
     const tooltipTitle = tooltipContent && (
         <Box sx={{ whiteSpace: 'pre-line', maxWidth: 300 }}>
@@ -565,7 +589,7 @@ export default function IpaIcon({ item, size = 128, isDragging = false }) {
                     direction="row"
                     useFlexGap
                     spacing={1}
-                    sx={{ justifyContent: 'space-between' }}
+                    sx={{ justifyContent: 'space-between', flexWrap: 'wrap' }}
                 >
                     <Button
                         variant="outlined"
@@ -574,12 +598,29 @@ export default function IpaIcon({ item, size = 128, isDragging = false }) {
                     >
                         {t('ui.delete')}
                     </Button>
-                    <Button
-                        startDecorator={<DownloadIcon />}
-                        onClick={handleDownload}
-                    >
-                        {t('ui.download')}
-                    </Button>
+                    <Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                        {['completed', 'downloaded'].includes(status) && (
+                            <Tooltip
+                                title={otaInstallAvailable ? t('ui.otaInstallHint') : t('ui.otaInstallRequiresHttps')}
+                                variant="outlined"
+                                placement="top"
+                            >
+                                <Button
+                                    color="success"
+                                    startDecorator={<InstallMobileIcon />}
+                                    onClick={handleInstallOrOta}
+                                >
+                                    {otaInstallAvailable ? t('ui.install') : t('ui.downloadIPA')}
+                                </Button>
+                            </Tooltip>
+                        )}
+                        <Button
+                            startDecorator={<DownloadIcon />}
+                            onClick={handleDownload}
+                        >
+                            {t('ui.download')}
+                        </Button>
+                    </Stack>
                 </Stack>
             </Sheet>
         </Drawer>

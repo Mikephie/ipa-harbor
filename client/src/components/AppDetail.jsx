@@ -23,11 +23,11 @@ import {
 } from '@mui/joy';
 import { Star, Download, Category, Person, History, AccountBalanceWallet, Delete, Refresh, InstallMobile, LabelImportantOutline } from '@mui/icons-material';
 import { tabClasses } from '@mui/joy/Tab';
-import { getAppVersions, purchaseApp, downloadApp, deleteTask, getAppInstallPackageUrl, getAppDownloadPackageUrl } from '../utils/api';
+import { getAppVersions, purchaseApp, downloadApp, deleteTask, getAppDownloadPackageUrl } from '../utils/api';
 import { useApp } from '../contexts/AppContext';
 import Swal from 'sweetalert2';
-import isValidDomain from 'is-valid-domain';
 import { getAppIconUrl } from '../utils/api';
+import { openInstallOrDownloadChoice as openOtaInstallOrDownload, isOtaInstallAvailable } from '../utils/otaInstall';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
@@ -153,6 +153,11 @@ export default function AppDetail({ app }) {
             return t('ui.dateFormatError'); // 日期格式错误
         }
     };
+
+    const otaInstallAvailable = isOtaInstallAvailable();
+
+    const openInstallOrDownloadChoice = (versionId) =>
+        openOtaInstallOrDownload({ trackId: app.trackId, versionId, accountId, t });
 
     // 获取版本列表
     const fetchVersions = async (useThirdPartyApi = false) => {
@@ -462,56 +467,9 @@ export default function AppDetail({ app }) {
                 return (
                     <>
                         <Box sx={{ flex: 1 }}>
-                            <Button fullWidth onClick={() => {
-                                const forceDownload = true; // 强制下载，忽略检查, 因为目前无法实现安装
-                                const isFQDN = isValidDomain(window.location.hostname);
-                                const isSecureContext = window.isSecureContext;
-                                console.log(isFQDN, isSecureContext);
-                                // 只有isFQDN为true时，才提示用户，否则直接跳转
-                                if (forceDownload || !isSecureContext || !isFQDN) {
-                                    window.open(getAppDownloadPackageUrl(app.trackId, 'latest', accountId), '_blank');
-                                    return;
-                                }
-                                Swal.fire({
-                                    title: t('ui.installOrDownload'), // 请问是下载 IPA 档案还是安装应用？
-                                    text: t('ui.pleaseSelect'), // 请选择
-                                    icon: 'question',
-                                    showCancelButton: false,
-                                    showConfirmButton: false,
-                                    html: `
-      <div style="display:flex; justify-content:center; gap:12px; padding:1rem;">
-        <a href="${getAppInstallPackageUrl(app.trackId, 'latest', accountId)}"
-        class="swal2-confirm swal2-styled"
-           style="
-             display:inline-block;
-             background-color:var(--swal2-confirm-button-background-color);
-             color:white;
-             padding:8px 16px;
-             border-radius:4px;
-             text-decoration:none;
-             font-size:14px;
-           ">
-           ${t('ui.install')}
-        </a>
-
-        <a href="${getAppDownloadPackageUrl(app.trackId, 'latest', accountId)}"
-                  class="swal2-cancel swal2-styled"
- style="
-             display:inline-block;
-             background-color:var(--swal2-cancel-button-background-color);
-             color:white;
-             padding:8px 16px;
-             border-radius:4px;
-             text-decoration:none;
-             font-size:14px;
-           ">
-           ${t('ui.downloadIPA')}
-        </a>
-      </div>
-    `,
-
-                                });
-                            }}>{t('ui.install')}</Button>
+                            <Button fullWidth onClick={() => openInstallOrDownloadChoice('latest')}>
+                                {otaInstallAvailable ? t('ui.install') : t('ui.downloadIPA')}
+                            </Button>
                         </Box>
                         <Stack direction="row" gap={1} justifyContent="center">
                             <Button
@@ -690,7 +648,7 @@ export default function AppDetail({ app }) {
 
                 case 'completed':
                     return (
-                        <Stack direction="row" gap={1} justifyContent="center">
+                        <Stack direction="row" gap={1} justifyContent="center" flexWrap="wrap">
                             <IconButton
                                 size="sm"
                                 variant="plain"
@@ -699,14 +657,29 @@ export default function AppDetail({ app }) {
                             >
                                 <Delete />
                             </IconButton>
-                            {/* 该功能是有问题的，暂时移除 */}
-                            {/* <Tooltip variant="outlined" color="warning" arrow size="sm" title={<Typography>需要 https 环境下使用, 暂不支持 macOS 安装</Typography>}>
-                                <Link href={`${getAppInstallPackageUrl(app.trackId, version.versionId, accountId)}`}>
-                                    <Button size="sm" color="success" startDecorator={<InstallMobile />}>安装</Button>
-                                </Link>
-                            </Tooltip> */}
+                            <Tooltip
+                                variant="outlined"
+                                color="primary"
+                                arrow
+                                size="sm"
+                                title={
+                                    <Typography>
+                                        {otaInstallAvailable
+                                            ? t('ui.otaInstallHint')
+                                            : t('ui.otaInstallRequiresHttps')}
+                                    </Typography>
+                                }
+                            >
+                                <Button
+                                    size="sm"
+                                    color="success"
+                                    startDecorator={<InstallMobile />}
+                                    onClick={() => openInstallOrDownloadChoice(version.versionId)}
+                                >
+                                    {t('ui.install')}
+                                </Button>
+                            </Tooltip>
                             <Link href={`${getAppDownloadPackageUrl(app.trackId, version.versionId, accountId)}`}>
-                                {/* <Button size="sm" startDecorator={<Download />}>下载IPA</Button> */}
                                 <Button size="sm" startDecorator={<Download />}>{t('ui.downloadIPA')}</Button>
                             </Link>
                         </Stack>
