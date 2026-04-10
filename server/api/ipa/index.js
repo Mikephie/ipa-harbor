@@ -13,8 +13,8 @@ const { KEYCHAIN_PASSPHRASE } = require('../../config/keychain');
 const {
     readAppleAccountIdFromRequest,
     ipatoolEnvForAccount,
-    getAppleAccountHome,
     LEGACY_FLAT_DATA_DIR,
+    resolveIpaFilePath,
 } = require('../../utils/appleAccount');
 
 /**
@@ -93,12 +93,6 @@ async function getAppIconUrls(appId, userRegion = null) {
 // 路由定义
 router.post('/metadata', metadataHandler);  // 解析IPA元数据
 
-function resolveIpaPath(fileName, accountId) {
-    const ipaFileName = fileName.endsWith('.ipa') ? fileName : `${fileName}.ipa`;
-    const base = accountId ? getAppleAccountHome(accountId) : LEGACY_FLAT_DATA_DIR;
-    return { ipaFileName, ipaPath: path.join(base, ipaFileName) };
-}
-
 function escapeXml(text) {
     if (text == null || text === '') return '';
     return String(text)
@@ -125,7 +119,7 @@ router.get('/install-package/:accountId/:fileName/manifest.plist', async (req, r
             return res.status(400).send('Invalid file name format');
         }
 
-        const { ipaFileName, ipaPath } = resolveIpaPath(fileName, accountId);
+        const { ipaFileName, ipaPath } = resolveIpaFilePath(fileName, accountId);
 
         // 检查IPA文件是否存在
         if (!fs.existsSync(ipaPath)) {
@@ -234,7 +228,7 @@ router.get('/getpackage/:accountId/:fileName', (req, res) => {
         return res.status(400).send('fileName parameter is required');
     }
 
-    const { ipaPath: filePath } = resolveIpaPath(fileName, accountId);
+    const { ipaPath: filePath } = resolveIpaFilePath(fileName, accountId);
 
     // 检查文件是否存在
     if (!fs.existsSync(filePath)) {

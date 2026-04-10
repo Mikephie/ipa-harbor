@@ -22,6 +22,34 @@ function getAppleAccountHome(accountId) {
     return path.join(ACCOUNTS_ROOT, accountId);
 }
 
+/**
+ * 解析 IPA 在磁盘上的实际路径：优先当前账号目录，再回退到升级前的 data 根目录（与 getpackage 旧路径一致）。
+ * @returns {{ ipaFileName: string, ipaPath: string, dataDir: string }}
+ */
+function resolveIpaFilePath(fileName, accountId) {
+    const ipaFileName = fileName.endsWith('.ipa') ? fileName : `${fileName}.ipa`;
+    const candidates = [];
+    if (accountId && isValidAppleAccountId(accountId)) {
+        const home = getAppleAccountHome(accountId);
+        candidates.push({ ipaPath: path.join(home, ipaFileName), dataDir: home });
+    }
+    candidates.push({
+        ipaPath: path.join(LEGACY_FLAT_DATA_DIR, ipaFileName),
+        dataDir: LEGACY_FLAT_DATA_DIR,
+    });
+
+    for (const c of candidates) {
+        if (fs.existsSync(c.ipaPath)) {
+            return { ipaFileName, ipaPath: c.ipaPath, dataDir: c.dataDir };
+        }
+    }
+    const primary = candidates[0] || {
+        ipaPath: path.join(LEGACY_FLAT_DATA_DIR, ipaFileName),
+        dataDir: LEGACY_FLAT_DATA_DIR,
+    };
+    return { ipaFileName, ipaPath: primary.ipaPath, dataDir: primary.dataDir };
+}
+
 function ensureAppleAccountHome(accountId) {
     const home = getAppleAccountHome(accountId);
     fs.mkdirSync(home, { recursive: true });
@@ -128,6 +156,7 @@ module.exports = {
     appleAccountIdFromEmail,
     isValidAppleAccountId,
     getAppleAccountHome,
+    resolveIpaFilePath,
     ensureAppleAccountHome,
     ipatoolEnvForAccount,
     readAppleAccountIdFromRequest,

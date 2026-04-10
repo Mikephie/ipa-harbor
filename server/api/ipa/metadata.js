@@ -3,7 +3,7 @@ const plist = require('plist');
 const bplist = require('bplist-parser');
 const fs = require('fs');
 const path = require('path');
-const { getAppleAccountHome, readAppleAccountIdFromRequest } = require('../../utils/appleAccount');
+const { readAppleAccountIdFromRequest, resolveIpaFilePath } = require('../../utils/appleAccount');
 
 /**
  * 解析IPA文件中的 iTunesMetadata.plist
@@ -16,13 +16,12 @@ function parseIpaMetadata(fileName, accountId) {
         if (!accountId) {
             return reject(new Error('缺少 accountId'));
         }
-        const dataDir = getAppleAccountHome(accountId);
-        const ipaPath = path.join(dataDir, fileName);
-        const jsonPath = path.join(dataDir, fileName.replace('.ipa', '.json'));
+        const { ipaFileName, ipaPath, dataDir } = resolveIpaFilePath(fileName, accountId);
+        const jsonPath = path.join(dataDir, ipaFileName.replace(/\.ipa$/i, '.json'));
 
         // 检查IPA文件是否存在
         if (!fs.existsSync(ipaPath)) {
-            return reject(new Error(`IPA文件不存在: ${fileName}`));
+            return reject(new Error(`IPA文件不存在: ${ipaFileName}`));
         }
 
         // 检查是否已经有对应的JSON文件
