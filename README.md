@@ -5,6 +5,15 @@ It supports app search, historical version downloads, and containerized deployme
 本项目是一个基于 **ipatool** 的开源 IPA 可视化 Web 管理工具，  
 支持 App 搜索、历史版本下载与 Docker 容器化部署。
 
+## Current Maintenance Docs / 当前维护文档
+
+- [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md)
+- [PROJECT_INVENTORY.md](PROJECT_INVENTORY.md)
+- [RUNBOOK.md](RUNBOOK.md)
+- [TODO.md](TODO.md)
+- [CHANGELOG.md](CHANGELOG.md)
+- [AI_HANDOFF.md](AI_HANDOFF.md)
+
 [Quick Start](#quick-start) | [快速开始](#快速开始)
 
 ## Quick Start
@@ -450,4 +459,3 @@ docker build -t ipaharbor . --load
 
 - [majd/ipatool](https://github.com/majd/ipatool/)  
   该项目采用 MIT License 开源协议。
-
