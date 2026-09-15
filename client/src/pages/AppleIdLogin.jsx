@@ -25,6 +25,34 @@ import { useApp } from '../contexts/AppContext';
 import Swal from 'sweetalert2';
 import { useTranslation } from 'react-i18next';
 
+function resolveLoginError(message = '', t) {
+    const text = String(message || '').trim();
+    if (!text) {
+        return text;
+    }
+
+    let raw = text;
+    if (text.startsWith('{')) {
+        try {
+            const parsed = JSON.parse(text);
+            raw = parsed.error || parsed.message || text;
+        } catch {
+            raw = text;
+        }
+    }
+
+    const normalized = String(raw).toLowerCase();
+    if (
+        normalized.includes('something went wrong') ||
+        normalized.includes('http 403') ||
+        normalized.includes('empty or non-plist')
+    ) {
+        return t('ui.loginSapError');
+    }
+
+    return raw;
+}
+
 const AppleIdLogin = () => {
     const { t } = useTranslation();
     const navigate = useNavigate();
@@ -96,13 +124,13 @@ const AppleIdLogin = () => {
                     const next = new URLSearchParams(searchParams);
                     next.delete('add');
                     setSearchParams(next, { replace: true });
-                    reconnectDownloadWebSocket();
                 }
+                reconnectDownloadWebSocket();
                 navigate('/');
             }
         } catch (error) {
             console.error('登录失败:', error.message);
-            setError(error.message);
+            setError(resolveLoginError(error.message, t));
 
             if (error.needsTwoFactor) {
                 setShowTwoFactor(true);
@@ -438,6 +466,11 @@ const AppleIdLogin = () => {
                                 >
                                     {loading ? t('ui.loggingIn') : (showTwoFactor ? t('ui.verifyAndLogin') : t('ui.login'))}
                                 </Button>
+                                {loading && (
+                                    <Typography level="body-xs" sx={{ textAlign: 'center', color: 'text.secondary' }}>
+                                        {t('ui.firstLoginHint')}
+                                    </Typography>
+                                )}
                             </Stack>
                         </form>
 
@@ -527,6 +560,12 @@ const AppleIdLogin = () => {
                                                     {t('ui.githubReadme')}&nbsp;
                                                 </Link>
                                                 {t('ui.loginIssue4Part2')}
+                                            </Typography>
+                                        </Stack>
+                                        <Stack direction="row" spacing={1}>
+                                            <Typography level="body-xs" sx={{ fontWeight: 'md' }}>5.</Typography>
+                                            <Typography level="body-xs">
+                                                {t('ui.loginIssue5')}
                                             </Typography>
                                         </Stack>
                                     </Stack>

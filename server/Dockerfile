@@ -1,15 +1,18 @@
 # syntax=docker/dockerfile:1.4
 
-FROM node:lts-alpine
+# 官方 ipatool 2.5.0+ 是 glibc 动态链接，Alpine/musl 无法执行。
+FROM node:lts-bookworm-slim
 
-RUN apk add --no-cache curl tar
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl tar ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 ARG TARGETARCH
 
 # 复制 package 文件并安装依赖
 COPY package*.json ./
-RUN npm ci --only=production && npm cache clean --force
+RUN npm ci --omit=dev && npm cache clean --force
 
 COPY . .
 
@@ -29,6 +32,7 @@ RUN set -ex && \
     fi && \
     cp "$IPATOOL_BIN" /app/bin/ipatool && \
     chmod +x /app/bin/ipatool && \
+    /app/bin/ipatool --version && \
     rm -rf /tmp/ipatool && \
     find /app/bin ! -name "ipatool" ! -name "LICENSE.txt" -type f -exec rm -f {} + && \
     rm -f /app/Dockerfile /app/.dockerignore && \
@@ -43,8 +47,8 @@ ENV ENABLE_MORE_LOGS=false
 ENV ALLOW_LAN_ACCESS=true
 
 # 创建非 root 用户和数据目录
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S ij369 -u 1001 -G nodejs && \
+RUN groupadd --gid 1001 nodejs && \
+    useradd --uid 1001 --gid nodejs --system --no-create-home ij369 && \
     chown -R ij369:nodejs /app
 
 USER ij369

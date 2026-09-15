@@ -300,6 +300,12 @@ export function AppProvider({ children }) {
     };
 
     useEffect(() => {
+        if (state.isAuthenticated && state.user?.accountId && adminLoggedIn) {
+            reconnectDownloadWebSocket();
+        }
+    }, [state.user?.accountId]);
+
+    useEffect(() => {
         // 只有在管理员已登录且不在加载状态时才执行
         if (!adminLoading && adminLoggedIn) {
             checkAuthStatus();

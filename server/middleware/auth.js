@@ -29,8 +29,12 @@ function verifyToken(token) {
  */
 async function authenticateToken(req, res, next) {
     try {
-        // 从cookie中获取令牌
-        const token = req.cookies?.authToken;
+        const headerToken = String(req.headers.authorization || '')
+            .replace(/^Bearer\s+/i, '')
+            .trim();
+        const token = req.cookies?.authToken
+            || req.headers['x-auth-token']
+            || headerToken;
 
         if (!token) {
             return res.status(401).json({

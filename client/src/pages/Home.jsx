@@ -137,10 +137,24 @@ export default function Home() {
             const response = await getAppDetails(allIds);
 
             if (response.success && response.data) {
-                setAppDetails(response.data);
+                const clickedId = String(clickedApp.id);
+                const matched = response.data.filter((detail) => String(detail.trackId) === clickedId);
+                const others = response.data.filter((detail) => String(detail.trackId) !== clickedId);
+                const ordered = [...matched, ...others];
+                setAppDetails(ordered);
 
-                const clickedIndex = response.data.findIndex(detail => detail.trackId === clickedApp.id);
-                setCurrentDetailIndex(clickedIndex >= 0 ? clickedIndex : 0);
+                if (matched.length === 0) {
+                    setShowDetailDialog(false);
+                    Swal.fire({
+                        icon: 'error',
+                        title: t('ui.getDetailsFailed'),
+                        text: t('ui.appDetailRegionMismatch'),
+                        confirmButtonText: t('ui.confirm')
+                    });
+                    return;
+                }
+
+                setCurrentDetailIndex(0);
             }
         } catch (error) {
             console.error('获取应用详情失败:', error.message);

@@ -80,12 +80,14 @@ curl -f http://localhost:3388/health
 
 # Update Procedure
 
-更新 ipatool 资产：
+更新 ipatool 资产（官方 Linux 包，最低 2.5.0，含 sha256 校验）：
 
 ```sh
 chmod +x dl_latest.sh
 ./dl_latest.sh
 ```
+
+不要把 macOS 的 `ipatool-sapfix` 拷进 `server/bin/` 或容器。
 
 构建镜像：
 
@@ -132,6 +134,8 @@ docker run -d \
 - 公网访问被拒：检查 `ALLOWED_DOMAINS` 和 `ALLOW_LAN_ACCESS`。
 - 下载进度不更新：检查反代 WebSocket header。
 - Apple 登录异常：确认每个容器建议使用独立 Apple ID，且 region 与主机 IP 合理。
+- Web 登录显示 `something went wrong` 或 HTTP 403：容器内 ipatool 过旧（2.3.x），需要官方 2.5.0+ 并重新发布镜像。
+- 本机 `ipatool auth login` 成功但网页失败：macOS Keychain 会话不会同步到群晖容器，必须在 Web 里重新登录。
 - 数据丢失：检查 `/app/data` 是否持久化挂载。
 
 # Troubleshooting

@@ -11,10 +11,12 @@
 - 生产容器使用 `server/Dockerfile`。
 - 数据和 IPA 文件持久化在 `/app/data`。
 - `ipatool` 二进制通过 `server/bin/` 资产进入镜像。
+- Linux 容器必须使用官方 `majd/ipatool` 2.5.0 或更新版本（跨平台 SAP）。macOS 上的 `ipatool-sapfix` 不能用于 Docker。
 
 # Deployment Location
 
 - 本地仓库：`/Users/mikephie/Documents/GitHub/ipa-harbor`
+- 群晖部署目录：`/Volumes/docker/ipa-harbor`（compose、data、certs，不是源码）
 - 默认容器 HTTP 端口：`3080`
 - 默认容器 HTTPS 端口：`3443`
 - 默认本机体验端口：`3388:3080`
@@ -92,6 +94,7 @@
 - 给 Docker 环境变量补充 required/optional 表。
 - 增加后端 health/API smoke test。
 - 明确 `server/bin/ipatool-*` 资产更新流程。
+- 群晖当前镜像若仍是 2026-04 的 2.3.0，Web 登录会因 Apple SAP 失败。
 
 # Do Not Change Without Care
 

@@ -66,8 +66,15 @@ function ipatoolEnvForAccount(accountId) {
 }
 
 function readAppleAccountIdFromRequest(req) {
-    const id = req.cookies?.[COOKIE_NAME];
-    return isValidAppleAccountId(id) ? id : null;
+    const fromCookie = req.cookies?.[COOKIE_NAME];
+    if (isValidAppleAccountId(fromCookie)) {
+        return fromCookie;
+    }
+    const fromHeader = String(req.headers['x-apple-account-id'] || '').trim();
+    if (isValidAppleAccountId(fromHeader)) {
+        return fromHeader;
+    }
+    return null;
 }
 
 function setAppleAccountCookie(res, accountId) {
@@ -93,19 +100,64 @@ function clearAppleAccountCookie(res) {
 
 const ACCOUNT_META_FILE = 'account-meta.json';
 
-function writeAccountMeta(accountId, { email }) {
+function readAccountMeta(accountId) {
+    if (!isValidAppleAccountId(accountId)) {
+        return null;
+    }
+    const metaPath = path.join(getAppleAccountHome(accountId), ACCOUNT_META_FILE);
+    if (!fs.existsSync(metaPath)) {
+        return null;
+    }
+    try {
+        return JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    } catch (_) {
+        return null;
+    }
+}
+
+function writeAccountMeta(accountId, patch = {}) {
     const home = ensureAppleAccountHome(accountId);
     const metaPath = path.join(home, ACCOUNT_META_FILE);
+    const previous = readAccountMeta(accountId) || {};
     const payload = {
-        email: String(email).trim().toLowerCase(),
+        ...previous,
+        ...patch,
         updatedAt: new Date().toISOString(),
     };
+    if (payload.email) {
+        payload.email = String(payload.email).trim().toLowerCase();
+    }
     fs.writeFileSync(metaPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+    return payload;
+}
+
+function resolveAccountRegion(email, accountId) {
+    if (email && global.userRegions?.has(email)) {
+        return global.userRegions.get(email) || null;
+    }
+    const meta = readAccountMeta(accountId);
+    return meta?.region || null;
 }
 
 /**
  * 列出本机已保存会话的账号（存在 .ipatool 目录）
  */
+/**
+ * 删掉该账号的 ipatool 钥匙串/cookie。
+ * 只做 auth revoke 不够：文件还在时，下次 login 会复用会话，苹果不会发验证码。
+ */
+function wipeIpatoolSession(accountId) {
+    if (!isValidAppleAccountId(accountId)) {
+        return false;
+    }
+    const ipatoolDir = path.join(getAppleAccountHome(accountId), '.ipatool');
+    if (!fs.existsSync(ipatoolDir)) {
+        return false;
+    }
+    fs.rmSync(ipatoolDir, { recursive: true, force: true });
+    return true;
+}
+
 function listStoredAccounts(currentAccountId) {
     if (!fs.existsSync(ACCOUNTS_ROOT)) {
         return [];
@@ -163,5 +215,8 @@ module.exports = {
     setAppleAccountCookie,
     clearAppleAccountCookie,
     writeAccountMeta,
+    readAccountMeta,
+    resolveAccountRegion,
     listStoredAccounts,
+    wipeIpatoolSession,
 };

@@ -341,6 +341,11 @@ export default function IpaIcon({ item, size = 128, isDragging = false }) {
                             onClick={handleRetryDownload}
                         >
                             <Typography sx={{ fontSize: '0.9rem', textAlign: 'center' }}>{t('ui.failed')}</Typography>
+                            {item.error && (
+                                <Typography sx={{ fontSize: '0.7rem', textAlign: 'center', color: 'danger.plainColor', wordBreak: 'break-all' }}>
+                                    {item.error}
+                                </Typography>
+                            )}
                             <Link sx={{ fontSize: '0.75rem', textAlign: 'center', color: '#666' }}>
                                 {/* 点击这里重试 */}
                                 {t('ui.clickToRetry')}

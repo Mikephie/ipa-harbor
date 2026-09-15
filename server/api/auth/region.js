@@ -8,7 +8,7 @@ const path = require('path');
 // ipatool二进制文件路径
 const IPATOOL_PATH = path.join(__dirname, '../../bin/ipatool');
 const { KEYCHAIN_PASSPHRASE } = require('../../config/keychain');
-const { readAppleAccountIdFromRequest, ipatoolEnvForAccount } = require('../../utils/appleAccount');
+const { readAppleAccountIdFromRequest, ipatoolEnvForAccount, writeAccountMeta } = require('../../utils/appleAccount');
 
 // 全局内存存储用户地区映射 { email: region }
 global.userRegions = global.userRegions || new Map();
@@ -76,14 +76,14 @@ async function handler(req, res) {
         // 如果 region 为空字符串或 null，则删除该用户的地区设置
         if (!region) {
             global.userRegions.delete(userInfo.email);
-        // 返回完整的用户信息（和 info 接口一样）
-        userInfo.region = null;
-        userInfo.accountId = accountId;
-        return res.json({
-            success: true,
-            message: 'Region cleared',
-            data: userInfo
-        });
+            writeAccountMeta(accountId, { email: userInfo.email, region: null });
+            userInfo.region = null;
+            userInfo.accountId = accountId;
+            return res.json({
+                success: true,
+                message: 'Region cleared',
+                data: userInfo
+            });
         }
 
         // 验证 region 格式（2位小写字母）
@@ -94,8 +94,8 @@ async function handler(req, res) {
             });
         }
 
-        // 保存到内存
         global.userRegions.set(userInfo.email, region);
+        writeAccountMeta(accountId, { email: userInfo.email, region });
 
         // 返回完整的用户信息（和 info 接口一样）
         userInfo.region = region;

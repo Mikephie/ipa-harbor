@@ -136,6 +136,7 @@ app.use('/v1/app', require('./api/app')); // 有些接口不需要管理员认�
 app.use('/v1/dl-manager', authenticateToken, require('./api/dl-manager'));
 app.use('/v1/ipa', require('./api/ipa')); // 下载和解析IPA文件不需要管理员认证
 app.use('/v1/admin', require('./api/admin')); // 管理员认证路由（不需要预先认证）
+app.use('/v1/ota', require('./api/ota')); // itms-services HTTPS 清单，不需要登录
 
 app.use('/v1/*', (req, res) => res.status(404).json({ error: 'Not Found' }));
 
@@ -148,7 +149,9 @@ app.get('/health', (req, res) => {
     }
     res.json({
         status: 'ok',
-        service: 'ipa-harbor'
+        service: 'ipa-harbor',
+        sessionExport: true,
+        otaPlist: true,
     });
 });
 

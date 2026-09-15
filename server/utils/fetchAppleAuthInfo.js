@@ -2,7 +2,7 @@ const { exec } = require('child_process');
 const path = require('path');
 const IPATOOL_PATH = path.join(__dirname, '../bin/ipatool');
 const { KEYCHAIN_PASSPHRASE } = require('../config/keychain');
-const { ipatoolEnvForAccount } = require('./appleAccount');
+const { ipatoolEnvForAccount, resolveAccountRegion } = require('./appleAccount');
 
 /**
  * 读取指定账号目录下 ipatool 会话信息，并合并内存中的地区偏好
@@ -19,9 +19,11 @@ function fetchAppleAuthInfo(accountId) {
             try {
                 const userData = JSON.parse(stdout);
                 if (userData && userData.email) {
-                    const userRegion = global.userRegions?.get(userData.email);
+                    const userRegion = resolveAccountRegion(userData.email, accountId);
                     if (userRegion) {
                         userData.region = userRegion;
+                        global.userRegions = global.userRegions || new Map();
+                        global.userRegions.set(userData.email, userRegion);
                     }
                 }
                 resolve({ ...userData, accountId });

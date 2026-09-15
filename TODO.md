@@ -9,8 +9,8 @@
 ## Medium Priority
 
 - [ ] 给后端增加 health/API smoke test 文档。
-- [ ] 给 `dl_latest.sh` 和 `server/bin/` 的 ipatool 更新流程补充校验步骤。
 - [ ] 给 nginx/WebSocket 反代配置补充生产检查清单。
+- [ ] 将本机已改的 ipatool 2.5.0 / SAP 登录修复发布到 GHCR，并在群晖 `docker compose pull && up -d`。
 
 ## Low Priority
 
@@ -24,4 +24,5 @@
 
 ## Done
 
+- [x] 2026-09-13 官方 ipatool 最低 2.5.0，`dl_latest.sh` 增加 sha256 校验，登录页不再回显原始 JSON。
 - [x] 2026-06-15 重建统一维护文档。

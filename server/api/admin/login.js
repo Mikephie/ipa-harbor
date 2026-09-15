@@ -59,6 +59,7 @@ async function loginHandler(req, res) {
             success: true,
             message: '登录成功',
             data: {
+                token,
                 user: {
                     id: user.id,
                     username: user.username,

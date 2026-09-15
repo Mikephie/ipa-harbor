@@ -42,7 +42,8 @@ export default function DownloadManager() {
                         downloadSpeed: progressInfo.downloadSpeed || '',
                         taskId: task.taskId || task.id,
                         type: 'task',
-                        bundleId: task.bundleId
+                        bundleId: task.bundleId,
+                        error: task.error
                     };
 
                     // 如果是completed状态，尝试从fileList中获取metadata

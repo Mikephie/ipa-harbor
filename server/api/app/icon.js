@@ -5,7 +5,8 @@ const path = require('path');
 // ipatool二进制文件路径
 const IPATOOL_PATH = path.join(__dirname, '../../bin/ipatool');
 const { KEYCHAIN_PASSPHRASE } = require('../../config/keychain');
-const { readAppleAccountIdFromRequest, ipatoolEnvForAccount } = require('../../utils/appleAccount');
+const { readAppleAccountIdFromRequest, ipatoolEnvForAccount, resolveAccountRegion } = require('../../utils/appleAccount');
+const { lookupAppsWithFallback } = require('../../utils/itunesLookup');
 
 // 1×1 透明 GIF
 const ONE_PIXEL_GIF_BASE64 =
@@ -29,8 +30,7 @@ async function getUserRegion(req) {
                 try {
                     const result = JSON.parse(stdout);
                     if (result.email) {
-                        const region = global.userRegions?.get(result.email);
-                        resolve(region || null);
+                        resolve(resolveAccountRegion(result.email, accountId));
                     } else {
                         resolve(null);
                     }
@@ -55,139 +55,86 @@ const getAppIcon = async (req, res) => {
         return sendPlaceholder(res);
     }
 
-    // 获取用户地区设置
     const userRegion = await getUserRegion(req);
 
-    let lookupUrl;
-    if (userRegion) {
-        lookupUrl = `https://itunes.apple.com/${userRegion}/lookup?id=${appId}`;
-    } else {
-        lookupUrl = `https://itunes.apple.com/lookup?id=${appId}`;
-    }
+    try {
+        const results = await lookupAppsWithFallback([appId], { preferredCountry: userRegion });
+        const app = results[0];
+        let iconUrl;
+        switch (String(size)) {
+            case '60':
+                iconUrl = app?.artworkUrl60;
+                break;
+            case '100':
+                iconUrl = app?.artworkUrl100;
+                break;
+            case '512':
+                iconUrl = app?.artworkUrl512;
+                break;
+            default:
+                iconUrl = app?.artworkUrl512 || app?.artworkUrl100 || app?.artworkUrl60;
+                break;
+        }
 
-    https
-        .get(lookupUrl, (response) => {
-            let data = '';
+        if (!iconUrl) {
+            return sendPlaceholder(res);
+        }
 
-            response.on('data', (chunk) => (data += chunk));
-            response.on('end', () => {
-                try {
-                    const json = JSON.parse(data);
-                    const app = json.results?.[0];
-                    let iconUrl;
-                    switch (size) {
-                        case 60:
-                            iconUrl = app?.artworkUrl60;
-                            break;
-                        case 100:
-                            iconUrl = app?.artworkUrl100;
-                            break;
-                        case 512:
-                            iconUrl = app?.artworkUrl512;
-                            break;
-
-                        default:
-                            iconUrl =
-                                app?.artworkUrl512 ||
-                                app?.artworkUrl100 ||
-                                app?.artworkUrl60;
-                            break;
-                    }
-
-                    if (!iconUrl) {
-                        return sendPlaceholder(res);
-                    }
-
-                    // 代理请求图标
-                    https
-                        .get(iconUrl, (imgRes) => {
-                            // 设置响应头
-                            res.writeHead(imgRes.statusCode, {
-                                'Content-Type': imgRes.headers['content-type'] || 'image/png',
-                                'Cache-Control': 'public, max-age=86400', // 缓存一天
-                                'Access-Control-Allow-Origin': '*',
-                                'Access-Control-Allow-Methods': 'GET, OPTIONS',
-                                'Cross-Origin-Resource-Policy': 'cross-origin',
-                                'Access-Control-Allow-Headers': 'Origin, X-Requested-With, Content-Type, Accept',
-                            });
-
-                            // 流式传输图像数据
-                            imgRes.pipe(res);
-                        })
-                        .on('error', (err) => {
-                            console.error('Error fetching icon:', err);
-                            sendPlaceholder(res);
-                        });
-
-                } catch (err) {
-                    console.error('Error parsing iTunes response:', err);
-                    sendPlaceholder(res);
-                }
+        https
+            .get(iconUrl, (imgRes) => {
+                res.writeHead(imgRes.statusCode, {
+                    'Content-Type': imgRes.headers['content-type'] || 'image/png',
+                    'Cache-Control': 'public, max-age=86400',
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+                    'Cross-Origin-Resource-Policy': 'cross-origin',
+                    'Access-Control-Allow-Headers': 'Origin, X-Requested-With, Content-Type, Accept',
+                });
+                imgRes.pipe(res);
+            })
+            .on('error', (err) => {
+                console.error('Error fetching icon:', err);
+                sendPlaceholder(res);
             });
-        })
-        .on('error', (err) => {
-            console.error('HTTPS request failed:', err);
-            sendPlaceholder(res);
-        });
+    } catch (err) {
+        console.error('HTTPS request failed:', err);
+        sendPlaceholder(res);
+    }
 };
 
 // 获取原始应用图标的URL
 const getAppIconUrl = async (req, res) => {
     const appId = req.params.appid;
     const size = req.params.size;
-    
-    // 获取用户地区设置
     const userRegion = await getUserRegion(req);
 
-    let lookupUrl;
-    if (userRegion) {
-        lookupUrl = `https://itunes.apple.com/${userRegion}/lookup?id=${appId}`;
-    } else {
-        lookupUrl = `https://itunes.apple.com/lookup?id=${appId}`;
+    try {
+        const results = await lookupAppsWithFallback([appId], { preferredCountry: userRegion });
+        const app = results[0];
+        let iconUrl;
+        switch (String(size)) {
+            case '60':
+                iconUrl = app?.artworkUrl60;
+                break;
+            case '100':
+                iconUrl = app?.artworkUrl100;
+                break;
+            case '512':
+                iconUrl = app?.artworkUrl512;
+                break;
+            default:
+                iconUrl = app?.artworkUrl512 || app?.artworkUrl100 || app?.artworkUrl60;
+                break;
+        }
+
+        if (!iconUrl) {
+            return res.status(404).json({ error: 'Icon URL not found' });
+        }
+        res.json({ iconUrl });
+    } catch (err) {
+        console.error('HTTPS request failed:', err);
+        res.status(500).json({ error: 'HTTPS request failed' });
     }
-    https
-        .get(lookupUrl, (response) => {
-            let data = '';
-
-            response.on('data', (chunk) => (data += chunk));
-            response.on('end', () => {
-                try {
-                    const json = JSON.parse(data);
-                    const app = json.results?.[0];
-                    let iconUrl;
-                    switch (size) {
-                        case '60':
-                            iconUrl = app?.artworkUrl60;
-                            break;
-                        case '100':
-                            iconUrl = app?.artworkUrl100;
-                            break;
-                        case '512':
-                            iconUrl = app?.artworkUrl512;
-                            break;
-
-                        default:
-                            iconUrl =
-                                app?.artworkUrl512 ||
-                                app?.artworkUrl100 ||
-                                app?.artworkUrl60;
-                            break;
-                    }
-
-                    if (!iconUrl) {
-                        return res.status(404).json({ error: 'Icon URL not found' });
-                    }
-                    res.json({ iconUrl });
-                } catch (err) {
-                    console.error('Error parsing iTunes response:', err);
-                    res.status(500).json({ error: 'Error parsing iTunes response' });
-                }
-            });
-        })
-        .on('error', (err) => {
-            console.error('HTTPS request failed:', err);
-            res.status(500).json({ error: 'HTTPS request failed' });
-        });
 };
 
 /**

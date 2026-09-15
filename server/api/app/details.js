@@ -1,15 +1,11 @@
-const https = require('https');
 const { exec } = require('child_process');
 const path = require('path');
 
-// ipatool二进制文件路径
 const IPATOOL_PATH = path.join(__dirname, '../../bin/ipatool');
 const { KEYCHAIN_PASSPHRASE } = require('../../config/keychain');
-const { ipatoolEnvForAccount } = require('../../utils/appleAccount');
+const { ipatoolEnvForAccount, resolveAccountRegion } = require('../../utils/appleAccount');
+const { lookupAppsWithFallback } = require('../../utils/itunesLookup');
 
-/**
- * 执行ipatool命令获取用户信息
- */
 function executeIpatool(command, accountId) {
     return new Promise((resolve, reject) => {
         exec(command, {
@@ -30,13 +26,9 @@ function executeIpatool(command, accountId) {
     });
 }
 
-/**
- * 获取应用详情
- */
 async function detailsHandler(req, res) {
     try {
         const { ids, lang = 'zh-CN' } = req.body;
-        // 参数验证
         if (!ids) {
             return res.status(400).json({
                 success: false,
@@ -45,7 +37,6 @@ async function detailsHandler(req, res) {
             });
         }
 
-        // 处理ID数组
         let idArray;
         if (Array.isArray(ids)) {
             idArray = ids;
@@ -65,44 +56,35 @@ async function detailsHandler(req, res) {
             });
         }
 
-        // 获取用户设置的地区（通过 ipatool 获取当前用户邮箱）
         let userRegion = null;
         try {
             const infoCommand = `"${IPATOOL_PATH}" auth info --keychain-passphrase "${KEYCHAIN_PASSPHRASE}" --non-interactive --format "json"`;
             const infoResult = await executeIpatool(infoCommand, req.appleAccountId);
             if (infoResult.success && infoResult.data?.email) {
-                userRegion = global.userRegions?.get(infoResult.data.email);
+                userRegion = resolveAccountRegion(infoResult.data.email, req.appleAccountId);
             }
         } catch (error) {
         }
 
-        // 构建iTunes API URL，支持地区参数
-        let itunesUrl;
-        if (userRegion) {
-            itunesUrl = `https://itunes.apple.com/${userRegion}/lookup?id=${idArray.join(',')}&lang=${lang}&entity=software`;
-        } else {
-            itunesUrl = `https://itunes.apple.com/lookup?id=${idArray.join(',')}&lang=${lang}&entity=software`;
-        }
-
-        console.log(`调用iTunes API: ${itunesUrl}`);
-
         try {
-            const itunesResponse = await makeHttpsRequest(itunesUrl);
-            const data = JSON.parse(itunesResponse);
+            const results = await lookupAppsWithFallback(idArray, {
+                preferredCountry: userRegion,
+                lang,
+            });
 
-            if (data && data.results) {
+            if (results.length > 0) {
                 return res.json({
                     success: true,
                     message: '获取应用详情成功',
-                    data: data.results
-                });
-            } else {
-                return res.status(404).json({
-                    success: false,
-                    message: '未找到应用详情',
-                    error: '指定的应用ID可能不存在'
+                    data: results
                 });
             }
+
+            return res.status(404).json({
+                success: false,
+                message: '未找到应用详情',
+                error: '指定的应用ID可能不存在'
+            });
         } catch (apiError) {
             console.error('调用iTunes API时出错:', apiError);
             return res.status(500).json({
@@ -120,40 +102,6 @@ async function detailsHandler(req, res) {
             error: error.message
         });
     }
-}
-
-/**
- * 发起HTTPS请求的辅助函数
- * @param {string} url - 请求URL
- * @returns {Promise<string>} 返回响应数据
- */
-function makeHttpsRequest(url) {
-    return new Promise((resolve, reject) => {
-        const request = https.get(url, (response) => {
-            let data = '';
-
-            response.on('data', (chunk) => {
-                data += chunk;
-            });
-
-            response.on('end', () => {
-                if (response.statusCode === 200) {
-                    resolve(data);
-                } else {
-                    reject(new Error(`HTTP ${response.statusCode}: ${response.statusMessage}`));
-                }
-            });
-        });
-
-        request.on('error', (error) => {
-            reject(error);
-        });
-
-        request.setTimeout(10000, () => {
-            request.destroy();
-            reject(new Error('请求超时'));
-        });
-    });
 }
 
 module.exports = detailsHandler;

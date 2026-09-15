@@ -217,6 +217,43 @@ AI 修改后：
 
 ---
 
+# 为什么生产镜像改用 Debian 而不是 Alpine
+
+Decision:
+
+`server/Dockerfile` 使用 `node:lts-bookworm-slim`。
+
+Reason:
+
+官方 `ipatool` 2.3.x 是静态 Go 二进制，Alpine 能跑。2.5.0 改为 glibc 动态链接（`/lib/ld-linux-*.so.1`），在 musl 上会出现 `no such file or directory` / `error relocating`，Web 登录会失败。
+
+Benefits:
+
+* 官方 Linux 资产可直接运行
+* 构建时用 `ipatool --version` 做冒烟检查
+
+---
+
+# 为什么容器用官方 ipatool 2.5.0，而不是 sapfix
+
+Decision:
+
+Docker / 群晖镜像只使用官方 `majd/ipatool` 2.5.0 或更新版本。
+
+Reason:
+
+* Apple 已改为 SAP 签名认证；官方 2.3.x 会返回 HTTP 403 / `something went wrong`。
+* `ipatool-sapfix` 是 macOS 过渡版，依赖 CommerceKit，不能在 Linux 容器里运行。
+* 官方 2.4.0+ 已提供跨平台 SAP 实现；2.5.0 是当前稳定线。
+
+Benefits:
+
+* Web 登录与 CLI 能力一致
+* 镜像可同时支持 amd64 / arm64
+* 不再依赖已停止功能开发的 fork
+
+---
+
 # Future Decisions
 
 未来新增：

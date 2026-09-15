@@ -317,15 +317,15 @@ class TaskManager {
                 if (allOutput.includes('password token is expired')) {
                     task.error = '密码令牌已过期，请重新登录';
                     task.errorType = 'TOKEN_EXPIRED';
-                    // console.log(`[DEBUG] 检测到TOKEN_EXPIRED错误`);
                 } else if (allOutput.includes('license is required')) {
                     task.error = '需要先领取该应用的许可证';
                     task.errorType = 'LICENSE_REQUIRED';
-                    // console.log(`[DEBUG] 检测到LICENSE_REQUIRED错误`);
+                } else if (allOutput.includes('invalid response')) {
+                    task.error = '苹果商店返回了异常，多半是登录过期。请重新登录 Apple ID 后再下载。';
+                    task.errorType = 'INVALID_RESPONSE';
                 } else {
                     task.error = stderr || stdout || `进程退出码: ${code}`;
                     task.errorType = 'GENERAL_ERROR';
-                    // console.log(`[DEBUG] 设置为GENERAL_ERROR`);
                 }
 
                 console.log(`下载失败: ${taskId}, 错误类型: ${task.errorType}, 错误: ${task.error}`);
@@ -548,8 +548,10 @@ class TaskManager {
 
     // 获取任务列表
     getTasks(accountId) {
+        // WebSocket 若在 Apple 登录前就连上，cookie 里还没有账号 ID。
+        // 这时仍返回全部任务，否则网页会显示「任务已创建」随后列表被清空。
         return Array.from(this.tasks.values())
-            .filter(t => t.accountId === accountId)
+            .filter(t => !accountId || t.accountId === accountId)
             .sort((a, b) =>
                 new Date(b.createdAt) - new Date(a.createdAt)
             );

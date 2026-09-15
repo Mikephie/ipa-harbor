@@ -8,6 +8,7 @@ const {
     readAppleAccountIdFromRequest,
     ipatoolEnvForAccount,
     clearAppleAccountCookie,
+    wipeIpatoolSession,
 } = require('../../utils/appleAccount');
 
 /**
@@ -71,6 +72,11 @@ async function revokeHandler(req, res) {
             const result = await executeIpatool(command, execEnv);
 
             if (result.success) {
+                try {
+                    wipeIpatoolSession(accountId);
+                } catch (_) {
+                    /* 撤销接口已成功，文件清不掉也不阻断 */
+                }
                 clearAppleAccountCookie(res);
                 return res.json({
                     success: true,
@@ -94,6 +100,11 @@ async function revokeHandler(req, res) {
                 execError.stderr.includes('authentication') ||
                 execError.stderr.includes('keychain')
             )) {
+                try {
+                    wipeIpatoolSession(accountId);
+                } catch (_) {
+                    /* ignore */
+                }
                 clearAppleAccountCookie(res);
                 return res.status(401).json({
                     success: false,

@@ -9,7 +9,11 @@ const {
     setAppleAccountCookie,
     ipatoolEnvForAccount,
     writeAccountMeta,
+    wipeIpatoolSession,
 } = require('../../utils/appleAccount');
+const { wantsStoreSession, readIpatoolStoreSession } = require('../../utils/readIpatoolAccount');
+
+const LOGIN_TIMEOUT_MS = 240000;
 
 function isTwoFactorRequired(output = '') {
     if (!output || typeof output !== 'string') {
@@ -19,13 +23,81 @@ function isTwoFactorRequired(output = '') {
     const normalized = output.toLowerCase();
     return (
         normalized.includes('2fa code is required') ||
+        normalized.includes('--auth-code') ||
+        normalized.includes('auth-code') ||
+        normalized.includes('auth code') ||
         normalized.includes('two-factor') ||
         normalized.includes('two factor') ||
         normalized.includes('verification code') ||
         normalized.includes('security code') ||
         normalized.includes('trusted device') ||
-        normalized.includes('trusted phone')
+        normalized.includes('trusted phone') ||
+        normalized.includes('needstwofactor')
     );
+}
+
+function extractIpatoolFields(content = '') {
+    const json = parseJsonSafely(content);
+    if (!json || typeof json !== 'object') {
+        return { message: '', error: '' };
+    }
+
+    return {
+        message: typeof json.message === 'string' ? json.message : '',
+        error: typeof json.error === 'string' ? json.error : '',
+        needsTwoFactor: Boolean(json.needsTwoFactor),
+    };
+}
+
+function describeLoginFailure(stdout = '', stderr = '', execMessage = '') {
+    const fromStdout = extractIpatoolFields(stdout);
+    const fromStderr = extractIpatoolFields(stderr);
+    const combined = [
+        fromStdout.error,
+        fromStdout.message,
+        fromStderr.error,
+        fromStderr.message,
+        stdout,
+        stderr,
+        execMessage,
+    ].filter(Boolean).join('\n');
+
+    if (isTwoFactorRequired(combined)) {
+        return null;
+    }
+
+    const normalized = combined.toLowerCase();
+    if (
+        normalized.includes('no such file or directory') ||
+        normalized.includes('enoent') ||
+        normalized.includes('error relocating') ||
+        normalized.includes('not found')
+    ) {
+        return '容器内 ipatool 无法运行。官方 2.5.0 需要 glibc，请更新到 Debian 基础镜像。';
+    }
+
+    if (
+        normalized.includes('something went wrong') ||
+        normalized.includes('http 403') ||
+        normalized.includes('empty or non-plist') ||
+        normalized.includes('x-apple-actionsignature')
+    ) {
+        return 'Apple 认证失败（HTTP 403 / SAP）。容器需要官方 ipatool 2.5.0 或更新版本。';
+    }
+
+    if (
+        (normalized.includes('password') && (normalized.includes('incorrect') || normalized.includes('invalid'))) ||
+        normalized.includes('authentication failed')
+    ) {
+        return 'Apple ID 或密码不正确';
+    }
+
+    const human = fromStdout.error || fromStdout.message || fromStderr.error || fromStderr.message;
+    if (human && human.toLowerCase() !== 'something went wrong') {
+        return human;
+    }
+
+    return 'Apple ID 登录失败，请检查账号、网络或容器内 ipatool 版本';
 }
 
 function parseJsonSafely(content = '') {
@@ -53,7 +125,12 @@ function executeIpatool(command, execOptions = {}) {
             const combinedOutput = `${stdout || ''}\n${stderr || ''}`;
 
             if (error) {
-                const jsonMessage = jsonStdout?.message || jsonStderr?.message || '';
+                const jsonMessage = [
+                    jsonStdout?.message,
+                    jsonStdout?.error,
+                    jsonStderr?.message,
+                    jsonStderr?.error,
+                ].filter(Boolean).join('\n');
                 const needsTwoFactor = Boolean(
                     jsonStdout?.needsTwoFactor ||
                     jsonStderr?.needsTwoFactor ||
@@ -97,6 +174,26 @@ function executeIpatool(command, execOptions = {}) {
     });
 }
 
+async function attachStoreSession(req, data, accountId) {
+    if (!wantsStoreSession(req)) {
+        return data;
+    }
+
+    const session = await readIpatoolStoreSession(accountId);
+    if (!session) {
+        return {
+            ...data,
+            sessionExportError: 'ipatool 钥匙串里没有可读的商店会话',
+        };
+    }
+
+    return {
+        ...data,
+        ...session,
+        password: undefined,
+    };
+}
+
 /**
  * 登录
  */
@@ -112,11 +209,23 @@ async function loginHandler(req, res) {
             });
         }
 
+        if (!String(email).includes('@')) {
+            return res.status(400).json({
+                success: false,
+                message: '请填写完整的 Apple ID 邮箱，例如 name@example.com'
+            });
+        }
+
         const accountId = appleAccountIdFromEmail(email);
         const execEnv = { env: ipatoolEnvForAccount(accountId) };
 
+        // 不要在每次登录前 wipe：下午 SAP 刚修好时能下载的会话，就是被反复清钥匙串冲掉的。
+
         // 构建ipatool命令
-        let command = `"${IPATOOL_PATH}" auth login -e "${email}" -p "${password}" --keychain-passphrase "${KEYCHAIN_PASSPHRASE}" --non-interactive --format "json"`;
+        // 必须用 --email= / --password=。短参数 -e/-p 时 ipatool 常不向苹果要验证码。
+        const escapedEmail = String(email).replace(/"/g, '\\"');
+        const escapedPassword = String(password).replace(/"/g, '\\"');
+        let command = `"${IPATOOL_PATH}" auth login --email="${escapedEmail}" --password="${escapedPassword}" --keychain-passphrase "${KEYCHAIN_PASSPHRASE}" --non-interactive --format "json"`;
 
         // 如果提供了二次验证码，添加到命令中
         if (twoFactor) {
@@ -128,14 +237,21 @@ async function loginHandler(req, res) {
         // console.log(`执行登录命令: ${command.replace(password, '***').replace(twoFactor || '', '***')}`);
 
         try {
-            const result = await executeIpatool(command, execEnv);
+            const result = await executeIpatool(command, {
+                ...execEnv,
+                timeout: LOGIN_TIMEOUT_MS,
+            });
 
             if (result.success) {
                 // 检查返回的数据中是否包含2FA要求
                 const resultData = result.data || {};
-                if (isTwoFactorRequired(resultData.message || '')) {
+                const resultHint = [resultData.message, resultData.error, result.rawOutput]
+                    .filter(Boolean)
+                    .join('\n');
+                if (isTwoFactorRequired(resultHint)) {
                     // 处理message，移除分号后的内容
-                    const cleanMessage = resultData.message.split(';')[0];
+                    const rawMessage = resultData.message || resultData.error || resultHint;
+                    const cleanMessage = String(rawMessage).split(';')[0];
                     return res.status(200).json({
                         success: false,
                         needsTwoFactor: true,
@@ -161,7 +277,10 @@ async function loginHandler(req, res) {
                         return res.json({
                             success: true,
                             message: '登录成功',
-                            data: { ...infoResult.data, accountId }
+                            data: await attachStoreSession(req, {
+                                ...infoResult.data,
+                                accountId,
+                            }, accountId)
                         });
                     } else {
                         setAppleAccountCookie(res, accountId);
@@ -170,7 +289,10 @@ async function loginHandler(req, res) {
                         return res.json({
                             success: true,
                             message: '登录成功，但获取用户信息失败',
-                            data: { ...(typeof result.data === 'object' && result.data ? result.data : {}), accountId }
+                            data: await attachStoreSession(req, {
+                                ...(typeof result.data === 'object' && result.data ? result.data : {}),
+                                accountId,
+                            }, accountId)
                         });
                     }
                 } catch (infoError) {
@@ -180,7 +302,10 @@ async function loginHandler(req, res) {
                     return res.json({
                         success: true,
                         message: '登录成功，但获取用户信息时出错',
-                        data: { ...(typeof result.data === 'object' && result.data ? result.data : {}), accountId }
+                        data: await attachStoreSession(req, {
+                            ...(typeof result.data === 'object' && result.data ? result.data : {}),
+                            accountId,
+                        }, accountId)
                     });
                 }
             } else if (result.needsTwoFactor) {
@@ -210,10 +335,16 @@ async function loginHandler(req, res) {
                 });
             }
 
+            const friendlyMessage = describeLoginFailure(
+                execError?.stdout || '',
+                execError?.stderr || '',
+                execError?.error || execError?.message || ''
+            ) || 'APPLE ID 登录过程中发生错误';
+
             return res.status(500).json({
                 success: false,
-                message: execError?.stdout || 'APPLE ID 登录过程中发生错误',
-                error: execError.message || '执行命令失败'
+                message: friendlyMessage,
+                error: '执行命令失败'
             });
         }
 
