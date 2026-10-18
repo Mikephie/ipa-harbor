@@ -1,0 +1,24 @@
+# 本機隔離驗證。只掛暫存資料目錄，不掛原始碼，也不要指向群暉共享目錄。
+
+name: ipa-harbor-r5
+
+services:
+  ipa-harbor:
+    image: ipa-harbor:isolated-r5
+    container_name: ipa-harbor-r5
+    ports:
+      - "18080:3080"
+    environment:
+      NODE_ENV: production
+      PORT: "3080"
+      HTTPS_PORT: "3443"
+      ALLOW_LAN_ACCESS: "true"
+      ALLOWED_DOMAINS: ipa.mikephie.com
+      ENABLE_MORE_LOGS: "false"
+      DBUS_SESSION_BUS_ADDRESS: unix:path=/nonexistent
+      PUBLIC_BASE_URL: https://ipa.mikephie.com
+      KEYCHAIN_PASSPHRASE: ${KEYCHAIN_PASSPHRASE:?required}
+      JWT_SECRET: ${JWT_SECRET:?required}
+      OTA_SIGNING_SECRET: ${OTA_SIGNING_SECRET:?required}
+    volumes:
+      - ${ISOLATED_DATA_DIR:?required}:/app/data

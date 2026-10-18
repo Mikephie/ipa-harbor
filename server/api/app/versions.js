@@ -1,11 +1,10 @@
-const { exec } = require('child_process');
-const path = require('path');
 const https = require('https');
-
-// ipatool二进制文件路径
-const IPATOOL_PATH = path.join(__dirname, '../../bin/ipatool');
-const { KEYCHAIN_PASSPHRASE } = require('../../config/keychain');
 const { ipatoolEnvForAccount } = require('../../utils/appleAccount');
+const { runIpatool, withKeychain } = require('../../utils/ipatoolExec');
+
+function listVersionArgs(appId) {
+    return withKeychain(['list-versions', '-i', String(appId)]);
+}
 
 /**
  * 执行ipatool命令的通用函数（带重试机制）
@@ -15,89 +14,60 @@ const { ipatoolEnvForAccount } = require('../../utils/appleAccount');
  * @param {number} currentAttempt - 当前尝试次数，默认为1
  * @returns {Promise} 返回Promise对象
  */
-function executeIpatool(command, accountId, maxRetries = 2, currentAttempt = 1) {
-    return new Promise((resolve, reject) => {
-        // console.log(`[DEBUG] 执行ipatool命令 (尝试 ${currentAttempt}/${maxRetries + 1}): ${command}`);
+function executeIpatool(args, accountId, maxRetries = 2, currentAttempt = 1) {
+    return runIpatool(args, {
+        timeout: 30000,
+        env: ipatoolEnvForAccount(accountId),
+    }).then(({ stdout }) => {
+        try {
+            return { success: true, data: JSON.parse(stdout) };
+        } catch (_) {
+            return { success: true, rawOutput: stdout };
+        }
+    }).catch((failure) => {
+        const stdout = failure.stdout || '';
+        const stderr = failure.stderr || '';
+        const allOutput = stdout + stderr;
 
-        exec(command, {
-            timeout: 30000,
-            env: ipatoolEnvForAccount(accountId),
-        }, (error, stdout, stderr) => {
-            if (error) {
-                const errorInfo = {
-                    success: false,
-                    error: error.message,
-                    stderr: stderr,
-                    stdout: stdout
-                };
+        if (allOutput.includes('password token is expired') || allOutput.includes('"error":"password token is expired"')) {
+            return Promise.reject({
+                success: false,
+                error: '密码令牌已过期，请重新登录',
+                errorType: 'TOKEN_EXPIRED',
+                stderr,
+                stdout,
+            });
+        }
 
-                // 检查是否包含特定错误类型
-                const allOutput = stdout + stderr;
+        if (allOutput.includes('license is required') || allOutput.includes('"error":"license is required"')) {
+            return Promise.reject({
+                success: false,
+                error: '需要先领取该应用的许可证',
+                errorType: 'LICENSE_REQUIRED',
+                stderr,
+                stdout,
+            });
+        }
 
-                // 检查是否是密码令牌过期错误
-                if (allOutput.includes('password token is expired') || allOutput.includes('"error":"password token is expired"')) {
-                    // console.log(`[DEBUG] 检测到password token is expired错误`);
-                    reject({
-                        success: false,
-                        error: '密码令牌已过期，请重新登录',
-                        errorType: 'TOKEN_EXPIRED',
-                        stderr: stderr,
-                        stdout: stdout
-                    });
-                    return;
-                }
+        const shouldRetry = (stderr.includes('An unknown error has occurred') ||
+            stdout.includes('An unknown error has occurred')) &&
+            currentAttempt <= maxRetries;
 
-                // 检查是否是需要许可证的错误
-                if (allOutput.includes('license is required') || allOutput.includes('"error":"license is required"')) {
-                    // console.log(`[DEBUG] 检测到license is required错误`);
-                    reject({
-                        success: false,
-                        error: '需要先领取该应用的许可证',
-                        errorType: 'LICENSE_REQUIRED',
-                        stderr: stderr,
-                        stdout: stdout
-                    });
-                    return;
-                }
+        if (shouldRetry) {
+            return new Promise((resolve, reject) => {
+                setTimeout(() => {
+                    executeIpatool(args, accountId, maxRetries, currentAttempt + 1)
+                        .then(resolve)
+                        .catch(reject);
+                }, 1000);
+            });
+        }
 
-                // 检查是否包含"An unknown error has occurred"错误
-                const shouldRetry = (stderr.includes('An unknown error has occurred') ||
-                    stdout.includes('An unknown error has occurred')) &&
-                    currentAttempt <= maxRetries;
-
-                if (shouldRetry) {
-                    // console.log(`[DEBUG] 检测到"An unknown error has occurred"错误，准备重试 (${currentAttempt}/${maxRetries})`);
-                    // console.log(`[DEBUG] 错误详情 - stdout: ${stdout}`);
-                    // console.log(`[DEBUG] 错误详情 - stderr: ${stderr}`);
-
-                    // 延迟1秒后重试
-                    setTimeout(() => {
-                        executeIpatool(command, accountId, maxRetries, currentAttempt + 1)
-                            .then(resolve)
-                            .catch(reject);
-                    }, 1000);
-                } else {
-                    // console.log(`[DEBUG] 命令执行失败，不符合重试条件或已达到最大重试次数`);
-                    reject(errorInfo);
-                }
-            } else {
-                try {
-                    // 尝试解析JSON输出
-                    const result = JSON.parse(stdout);
-                    // console.log(`[DEBUG] 命令执行成功 (尝试 ${currentAttempt})`);
-                    resolve({
-                        success: true,
-                        data: result
-                    });
-                } catch (parseError) {
-                    // 如果不是JSON格式，返回原始输出
-                    // console.log(`[DEBUG] 命令执行成功，返回原始输出 (尝试 ${currentAttempt})`);
-                    resolve({
-                        success: true,
-                        rawOutput: stdout
-                    });
-                }
-            }
+        return Promise.reject({
+            success: false,
+            error: 'ipatool exited',
+            stderr,
+            stdout,
         });
     });
 }
@@ -169,9 +139,7 @@ async function versionsHandler(req, res) {
         }
 
         // 构建ipatool list-versions命令
-        const command = `"${IPATOOL_PATH}" list-versions -i "${appId}" --keychain-passphrase "${KEYCHAIN_PASSPHRASE}" --non-interactive --format "json"`;
-
-        // console.log(`执行获取版本列表命令: ${command}`);
+        const versionArgs = listVersionArgs(appId);
 
         try {
             // 根据参数决定使用哪种数据源
@@ -336,12 +304,7 @@ async function getLatestVersionId(appId, accountId) {
         if (!accountId) {
             return null;
         }
-        // 构建ipatool list-versions命令
-        const command = `"${IPATOOL_PATH}" list-versions -i "${appId}" --keychain-passphrase "${KEYCHAIN_PASSPHRASE}" --non-interactive --format "json"`;
-
-        // console.log(`[DEBUG] 获取最新版本ID命令: ${command}`);
-
-        const ipatoolResult = await executeIpatool(command, accountId);
+        const ipatoolResult = await executeIpatool(listVersionArgs(appId), accountId);
 
         if (ipatoolResult.success && ipatoolResult.data) {
             // 获取版本ID数组并反转（最新的在最后）

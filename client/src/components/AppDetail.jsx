@@ -23,11 +23,11 @@ import {
 } from '@mui/joy';
 import { Star, Download, Category, Person, History, AccountBalanceWallet, Delete, Refresh, InstallMobile, LabelImportantOutline } from '@mui/icons-material';
 import { tabClasses } from '@mui/joy/Tab';
-import { getAppVersions, purchaseApp, downloadApp, deleteTask, getAppDownloadPackageUrl } from '../utils/api';
+import { getAppVersions, purchaseApp, downloadApp, deleteTask } from '../utils/api';
 import { useApp } from '../contexts/AppContext';
 import Swal from 'sweetalert2';
 import { getAppIconUrl } from '../utils/api';
-import { openInstallOrDownloadChoice as openOtaInstallOrDownload, isOtaInstallAvailable } from '../utils/otaInstall';
+import { openInstallOrDownloadChoice as openOtaInstallOrDownload, openSignedDownload, isOtaInstallAvailable } from '../utils/otaInstall';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
@@ -679,9 +679,18 @@ export default function AppDetail({ app }) {
                                     {t('ui.install')}
                                 </Button>
                             </Tooltip>
-                            <Link href={`${getAppDownloadPackageUrl(app.trackId, version.versionId, accountId)}`}>
-                                <Button size="sm" startDecorator={<Download />}>{t('ui.downloadIPA')}</Button>
-                            </Link>
+                            <Button
+                                size="sm"
+                                startDecorator={<Download />}
+                                onClick={() => openSignedDownload({
+                                    trackId: app.trackId,
+                                    versionId: version.versionId,
+                                    accountId,
+                                    t,
+                                })}
+                            >
+                                {t('ui.downloadIPA')}
+                            </Button>
                         </Stack>
                     );
 

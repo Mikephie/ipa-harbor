@@ -1,8 +1,4 @@
-const { exec } = require('child_process');
-const path = require('path');
 const fs = require('fs');
-const IPATOOL_PATH = path.join(__dirname, '../../bin/ipatool');
-const { KEYCHAIN_PASSPHRASE } = require('../../config/keychain');
 const {
     isValidAppleAccountId,
     getAppleAccountHome,
@@ -10,14 +6,13 @@ const {
     clearAppleAccountCookie,
     ipatoolEnvForAccount,
 } = require('../../utils/appleAccount');
+const { runIpatool, buildAuthRevokeArgs } = require('../../utils/ipatoolExec');
 
 function revokeInAccountHome(accountId) {
-    return new Promise((resolve) => {
-        const command = `"${IPATOOL_PATH}" auth revoke --keychain-passphrase "${KEYCHAIN_PASSPHRASE}" --non-interactive --format "json"`;
-        exec(command, { timeout: 20000, env: ipatoolEnvForAccount(accountId) }, () => {
-            resolve();
-        });
-    });
+    return runIpatool(buildAuthRevokeArgs(), {
+        timeout: 20000,
+        env: ipatoolEnvForAccount(accountId),
+    }).then(() => undefined).catch(() => undefined);
 }
 
 /**

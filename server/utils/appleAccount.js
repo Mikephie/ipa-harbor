@@ -2,7 +2,9 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
-const DATA_ROOT = path.join(__dirname, '../data');
+const DATA_ROOT = process.env.IPA_HARBOR_DATA_ROOT
+    ? path.resolve(process.env.IPA_HARBOR_DATA_ROOT)
+    : path.join(__dirname, '../data');
 const ACCOUNTS_ROOT = path.join(DATA_ROOT, 'accounts');
 const LEGACY_FLAT_DATA_DIR = DATA_ROOT;
 
@@ -22,32 +24,96 @@ function getAppleAccountHome(accountId) {
     return path.join(ACCOUNTS_ROOT, accountId);
 }
 
-/**
- * 解析 IPA 在磁盘上的实际路径：优先当前账号目录，再回退到升级前的 data 根目录（与 getpackage 旧路径一致）。
- * @returns {{ ipaFileName: string, ipaPath: string, dataDir: string }}
- */
-function resolveIpaFilePath(fileName, accountId) {
-    const ipaFileName = fileName.endsWith('.ipa') ? fileName : `${fileName}.ipa`;
-    const candidates = [];
-    if (accountId && isValidAppleAccountId(accountId)) {
-        const home = getAppleAccountHome(accountId);
-        candidates.push({ ipaPath: path.join(home, ipaFileName), dataDir: home });
+function normalizeIpaFileName(fileName) {
+    const raw = String(fileName || '').trim();
+    if (!raw || raw.length > 180) {
+        return null;
     }
-    candidates.push({
-        ipaPath: path.join(LEGACY_FLAT_DATA_DIR, ipaFileName),
-        dataDir: LEGACY_FLAT_DATA_DIR,
-    });
+    if (/[\0/\\]/.test(raw) || raw.includes('..')) {
+        return null;
+    }
+    const ipaFileName = raw.toLowerCase().endsWith('.ipa') ? raw : `${raw}.ipa`;
+    if (path.basename(ipaFileName) !== ipaFileName) {
+        return null;
+    }
+    if (!/^[A-Za-z0-9][A-Za-z0-9._+-]*\.ipa$/.test(ipaFileName)) {
+        return null;
+    }
+    return ipaFileName;
+}
 
-    for (const c of candidates) {
-        if (fs.existsSync(c.ipaPath)) {
-            return { ipaFileName, ipaPath: c.ipaPath, dataDir: c.dataDir };
-        }
+function containedPath(dir, fileName) {
+    const root = path.resolve(dir);
+    const candidate = path.resolve(root, fileName);
+    if (candidate !== path.join(root, fileName)) {
+        return null;
     }
-    const primary = candidates[0] || {
-        ipaPath: path.join(LEGACY_FLAT_DATA_DIR, ipaFileName),
-        dataDir: LEGACY_FLAT_DATA_DIR,
-    };
-    return { ipaFileName, ipaPath: primary.ipaPath, dataDir: primary.dataDir };
+    if (!candidate.startsWith(`${root}${path.sep}`)) {
+        return null;
+    }
+    return candidate;
+}
+
+function existingContainedFile(dir, ipaFileName) {
+    const candidate = containedPath(dir, ipaFileName);
+    if (!candidate || !fs.existsSync(candidate)) {
+        return null;
+    }
+    let realDir;
+    let realFile;
+    try {
+        realDir = fs.realpathSync(dir);
+        realFile = fs.realpathSync(candidate);
+    } catch (_) {
+        return null;
+    }
+    if (!realFile.startsWith(`${realDir}${path.sep}`)) {
+        return null;
+    }
+    if (!fs.statSync(realFile).isFile()) {
+        return null;
+    }
+    return { ipaFileName, ipaPath: realFile, dataDir: realDir };
+}
+
+/** 只在当前账号目录内查找，不回退到 data 根目录。下载请用 resolveOwnedIpaFile。 */
+function resolveIpaFilePath(fileName, accountId) {
+    if (!isValidAppleAccountId(accountId)) {
+        return null;
+    }
+    const ipaFileName = normalizeIpaFileName(fileName);
+    if (!ipaFileName) {
+        return null;
+    }
+    const home = getAppleAccountHome(accountId);
+    const found = existingContainedFile(home, ipaFileName);
+    if (found) {
+        return found;
+    }
+    const ipaPath = containedPath(home, ipaFileName);
+    if (!ipaPath) {
+        return null;
+    }
+    return { ipaFileName, ipaPath, dataDir: path.resolve(home) };
+}
+
+function resolveLegacyIpaFile(fileName) {
+    const ipaFileName = normalizeIpaFileName(fileName);
+    if (!ipaFileName) {
+        return null;
+    }
+    return existingContainedFile(LEGACY_FLAT_DATA_DIR, ipaFileName);
+}
+
+function resolveOwnedIpaFile(accountId, fileName) {
+    if (!isValidAppleAccountId(accountId)) {
+        return null;
+    }
+    const ipaFileName = normalizeIpaFileName(fileName);
+    if (!ipaFileName) {
+        return null;
+    }
+    return existingContainedFile(getAppleAccountHome(accountId), ipaFileName);
 }
 
 function ensureAppleAccountHome(accountId) {
@@ -70,7 +136,11 @@ function readAppleAccountIdFromRequest(req) {
     if (isValidAppleAccountId(fromCookie)) {
         return fromCookie;
     }
-    const fromHeader = String(req.headers['x-apple-account-id'] || '').trim();
+    // 公开接口没有管理员身份时，不能用请求头选中别人的钥匙串。
+    if (!req.user) {
+        return null;
+    }
+    const fromHeader = String(req.headers?.['x-apple-account-id'] || '').trim();
     if (isValidAppleAccountId(fromHeader)) {
         return fromHeader;
     }
@@ -132,11 +202,11 @@ function writeAccountMeta(accountId, patch = {}) {
 }
 
 function resolveAccountRegion(email, accountId) {
-    if (email && global.userRegions?.has(email)) {
-        return global.userRegions.get(email) || null;
-    }
-    const meta = readAccountMeta(accountId);
-    return meta?.region || null;
+    const fromMemory = email && global.userRegions?.has(email)
+        ? global.userRegions.get(email)
+        : null;
+    const region = fromMemory || readAccountMeta(accountId)?.region || '';
+    return /^[a-z]{2}$/.test(region) ? region : null;
 }
 
 /**
@@ -208,7 +278,10 @@ module.exports = {
     appleAccountIdFromEmail,
     isValidAppleAccountId,
     getAppleAccountHome,
+    normalizeIpaFileName,
     resolveIpaFilePath,
+    resolveOwnedIpaFile,
+    resolveLegacyIpaFile,
     ensureAppleAccountHome,
     ipatoolEnvForAccount,
     readAppleAccountIdFromRequest,

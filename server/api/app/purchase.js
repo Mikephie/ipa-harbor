@@ -1,48 +1,22 @@
-const { exec } = require('child_process');
-const path = require('path');
-
-// ipatool二进制文件路径
-const IPATOOL_PATH = path.join(__dirname, '../../bin/ipatool');
-const { KEYCHAIN_PASSPHRASE } = require('../../config/keychain');
 const { ipatoolEnvForAccount } = require('../../utils/appleAccount');
+const { runIpatool, withKeychain } = require('../../utils/ipatoolExec');
 
-/**
- * 执行ipatool命令的通用函数
- * @param {string} command - 要执行的命令
- * @param {string} accountId - Apple 账号目录 ID
- * @returns {Promise} 返回Promise对象
- */
-function executeIpatool(command, accountId) {
-    return new Promise((resolve, reject) => {
-        exec(command, {
-            timeout: 60000,
-            env: ipatoolEnvForAccount(accountId),
-        }, (error, stdout, stderr) => {
-            if (error) {
-                reject({
-                    success: false,
-                    error: error.message,
-                    stderr: stderr,
-                    stdout: stdout
-                });
-            } else {
-                try {
-                    // 尝试解析JSON输出
-                    const result = JSON.parse(stdout);
-                    resolve({
-                        success: true,
-                        data: result
-                    });
-                } catch (parseError) {
-                    // 如果不是JSON格式，返回原始输出
-                    resolve({
-                        success: true,
-                        rawOutput: stdout
-                    });
-                }
-            }
-        });
-    });
+function executeIpatool(args, accountId) {
+    return runIpatool(args, {
+        timeout: 60000,
+        env: ipatoolEnvForAccount(accountId),
+    }).then(({ stdout }) => {
+        try {
+            return { success: true, data: JSON.parse(stdout) };
+        } catch (_) {
+            return { success: true, rawOutput: stdout };
+        }
+    }).catch((failure) => Promise.reject({
+        success: false,
+        error: 'ipatool exited',
+        stderr: failure.stderr || '',
+        stdout: failure.stdout || '',
+    }));
 }
 
 /**
@@ -62,12 +36,10 @@ async function purchaseHandler(req, res) {
         }
 
         // 构建ipatool purchase命令
-        const command = `"${IPATOOL_PATH}" purchase -b "${bundleId}" --keychain-passphrase "${KEYCHAIN_PASSPHRASE}" --non-interactive --format "json"`;
-
-        // console.log(`执行购买命令: ${command}`);
+        const purchaseArgs = withKeychain(['purchase', '-b', String(bundleId)]);
 
         try {
-            const result = await executeIpatool(command, req.appleAccountId);
+            const result = await executeIpatool(purchaseArgs, req.appleAccountId);
 
             if (result.success) {
                 return res.json({

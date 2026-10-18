@@ -1,6 +1,8 @@
 # syntax=docker/dockerfile:1.4
 
-# 官方 ipatool 2.5.0+ 是 glibc 动态链接，Alpine/musl 无法执行。
+# 官方 ipatool 是 glibc 动态链接，Alpine/musl 无法执行。
+# 2.5.0 起就依赖 glibc；正式环境实际跑的是 2.6.x。
+# 下面按 TARGETARCH 取 bin 里对应架构的最新归档，不按版本文字挑选。
 FROM node:lts-bookworm-slim
 
 RUN apt-get update && \
@@ -45,6 +47,8 @@ ENV PORT=3080
 ENV ALLOWED_DOMAINS=""
 ENV ENABLE_MORE_LOGS=false
 ENV ALLOW_LAN_ACCESS=true
+# Linux 容器没有图形钥匙串，避免 dbus 把 ipatool 登录卡住
+ENV DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent
 
 # 创建非 root 用户和数据目录
 RUN groupadd --gid 1001 nodejs && \

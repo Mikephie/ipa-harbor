@@ -12,6 +12,13 @@ services:
       # openssl rand -base64 15 | tr -dc 'A-Za-z0-9' | head -c10; echo
       # 最重要：建议随机一个字符串替换keychain_passphrase_here, 出于安全考虑不设置这个就禁止启动，是有必要的，这个字符串泄露会导致 Keychain 解开，Apple ID访问权限就打开了，所以放在环境变量里
       - KEYCHAIN_PASSPHRASE=keychain_passphrase_here
+      # 沿用当前正在签发登录令牌的 JWT_SECRET，不要在这次启动时新生成。
+      # 未设置时生产环境会在监听前退出。它与上面的钥匙串口令互相独立。
+      # - JWT_SECRET=
+      # 手机可访问的 HTTPS origin，不能带路径、查询、片段或账号信息。
+      # - PUBLIC_BASE_URL=https://your-domain.com
+      # 独立的 OTA 签名密钥，不能复用 JWT 或钥匙串口令。缺失时只有 OTA 返回 503。
+      # - OTA_SIGNING_SECRET=
       # http 端口
       - PORT=3080
       # https 端口

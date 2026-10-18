@@ -2,13 +2,8 @@
  * 设置用户地区
  */
 
-const { exec } = require('child_process');
-const path = require('path');
-
-// ipatool二进制文件路径
-const IPATOOL_PATH = path.join(__dirname, '../../bin/ipatool');
-const { KEYCHAIN_PASSPHRASE } = require('../../config/keychain');
 const { readAppleAccountIdFromRequest, ipatoolEnvForAccount, writeAccountMeta } = require('../../utils/appleAccount');
+const { runIpatool, buildAuthInfoArgs } = require('../../utils/ipatoolExec');
 
 // 全局内存存储用户地区映射 { email: region }
 global.userRegions = global.userRegions || new Map();
@@ -17,21 +12,17 @@ global.userRegions = global.userRegions || new Map();
  * 执行ipatool命令获取用户信息
  */
 function getUserInfo(execEnv) {
-    return new Promise((resolve, reject) => {
-        const command = `"${IPATOOL_PATH}" auth info --keychain-passphrase "${KEYCHAIN_PASSPHRASE}" --non-interactive --format "json"`;
-
-        exec(command, { timeout: 15000, ...execEnv }, (error, stdout, stderr) => {
-            if (error) {
-                reject(new Error('Not authenticated'));
-            } else {
-                try {
-                    const result = JSON.parse(stdout);
-                    resolve(result);
-                } catch (parseError) {
-                    reject(new Error('Failed to parse user info'));
-                }
-            }
-        });
+    return runIpatool(buildAuthInfoArgs(), { timeout: 15000, ...execEnv }).then(({ stdout }) => {
+        try {
+            return JSON.parse(stdout);
+        } catch (_) {
+            return Promise.reject(new Error('Failed to parse user info'));
+        }
+    }).catch((failure) => {
+        if (failure instanceof Error && failure.message === 'Failed to parse user info') {
+            return Promise.reject(failure);
+        }
+        return Promise.reject(new Error('Not authenticated'));
     });
 }
 

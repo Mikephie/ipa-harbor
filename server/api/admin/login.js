@@ -59,6 +59,7 @@ async function loginHandler(req, res) {
             success: true,
             message: '登录成功',
             data: {
+                // 仅在密码校验成功后返回。网页继续使用 HttpOnly cookie；外部 App 读取此字段。
                 token,
                 user: {
                     id: user.id,

@@ -3,8 +3,8 @@ import {
     Box, Stack, Typography, Skeleton, Tooltip, Divider, IconButton, Chip, Link,
     Drawer, Button, DialogTitle, DialogContent, ModalClose, Sheet
 } from '@mui/joy';
-import { getAppIconUrl, getAppDownloadPackageUrl, deleteTask, downloadApp } from '../utils/api';
-import { openInstallOrDownloadChoice, isOtaInstallAvailable } from '../utils/otaInstall';
+import { getAppIconUrl, deleteTask, downloadApp } from '../utils/api';
+import { openInstallOrDownloadChoice, openSignedDownload, isOtaInstallAvailable } from '../utils/otaInstall';
 import Swal from 'sweetalert2';
 import formatFileSize from '../utils/formatFileSize.js';
 import { Close as CloseIcon, Download as DownloadIcon, InstallMobile as InstallMobileIcon } from '@mui/icons-material';
@@ -421,16 +421,7 @@ export default function IpaIcon({ item, size = 128, isDragging = false }) {
     const handleDownload = (e) => {
         e.stopPropagation();
         const { trackId, versionId: vid } = resolveTrackAndVersion();
-        const url = getAppDownloadPackageUrl(trackId, vid, accountId);
-        if (!url) {
-            Swal.fire({
-                icon: 'warning',
-                title: t('ui.appleIdLogin'),
-                confirmButtonText: t('ui.confirm'),
-            });
-            return;
-        }
-        window.open(url, '_blank');
+        void openSignedDownload({ trackId, versionId: vid, accountId, t });
     };
 
     const handleInstallOrOta = (e) => {

@@ -1,8 +1,5 @@
-const { exec } = require('child_process');
-const path = require('path');
-const IPATOOL_PATH = path.join(__dirname, '../bin/ipatool');
-const { KEYCHAIN_PASSPHRASE } = require('../config/keychain');
 const { ipatoolEnvForAccount, resolveAccountRegion } = require('./appleAccount');
+const { runIpatool, buildAuthInfoArgs } = require('./ipatoolExec');
 
 /**
  * 读取指定账号目录下 ipatool 会话信息，并合并内存中的地区偏好
@@ -10,12 +7,10 @@ const { ipatoolEnvForAccount, resolveAccountRegion } = require('./appleAccount')
  */
 function fetchAppleAuthInfo(accountId) {
     return new Promise((resolve, reject) => {
-        const command = `"${IPATOOL_PATH}" auth info --keychain-passphrase "${KEYCHAIN_PASSPHRASE}" --non-interactive --format "json"`;
-        exec(command, { timeout: 15000, env: ipatoolEnvForAccount(accountId) }, (error, stdout, stderr) => {
-            if (error) {
-                reject({ error, stderr, stdout });
-                return;
-            }
+        runIpatool(buildAuthInfoArgs(), {
+            timeout: 15000,
+            env: ipatoolEnvForAccount(accountId),
+        }).then(({ stdout }) => {
             try {
                 const userData = JSON.parse(stdout);
                 if (userData && userData.email) {
@@ -30,6 +25,8 @@ function fetchAppleAuthInfo(accountId) {
             } catch (parseErr) {
                 reject({ parseErr, stdout });
             }
+        }).catch((failure) => {
+            reject({ error: failure, stderr: failure.stderr || '', stdout: failure.stdout || '' });
         });
     });
 }

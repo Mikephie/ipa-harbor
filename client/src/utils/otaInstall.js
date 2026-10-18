@@ -1,6 +1,6 @@
 import Swal from 'sweetalert2';
 import isValidDomain from 'is-valid-domain';
-import { getAppInstallPackageUrl, getAppDownloadPackageUrl } from './api';
+import { createSignedInstallLink } from './api';
 
 export function isOtaInstallAvailable() {
     if (typeof window === 'undefined') return false;
@@ -15,21 +15,47 @@ export function isOtaInstallAvailable() {
  * @param {string|null|undefined} opts.accountId
  * @param {import('i18next').TFunction} opts.t
  */
-export function openInstallOrDownloadChoice({ trackId, versionId, accountId, t }) {
+async function loadSignedLinks({ trackId, versionId, accountId, t }) {
     if (!accountId) {
         void Swal.fire({
             icon: 'warning',
             title: t('ui.appleIdLogin'),
             confirmButtonText: t('ui.confirm'),
         });
+        return null;
+    }
+    try {
+        const result = await createSignedInstallLink(trackId, versionId, accountId);
+        return result.data;
+    } catch (error) {
+        void Swal.fire({
+            icon: 'error',
+            title: t('ui.getDetailsFailed'),
+            text: error.message,
+            confirmButtonText: t('ui.confirm'),
+        });
+        return null;
+    }
+}
+
+export async function openSignedDownload({ trackId, versionId, accountId, t }) {
+    const links = await loadSignedLinks({ trackId, versionId, accountId, t });
+    if (links?.downloadUrl) {
+        window.open(links.downloadUrl, '_blank');
+    }
+}
+
+export async function openInstallOrDownloadChoice({ trackId, versionId, accountId, t }) {
+    const links = await loadSignedLinks({ trackId, versionId, accountId, t });
+    if (!links?.installUrl || !links?.downloadUrl) {
         return;
     }
     if (!isOtaInstallAvailable()) {
-        window.open(getAppDownloadPackageUrl(trackId, versionId, accountId), '_blank');
+        window.open(links.downloadUrl, '_blank');
         return;
     }
-    const installUrl = getAppInstallPackageUrl(trackId, versionId, accountId);
-    const downloadUrl = getAppDownloadPackageUrl(trackId, versionId, accountId);
+    const installUrl = links.installUrl;
+    const downloadUrl = links.downloadUrl;
     void Swal.fire({
         title: t('ui.installOrDownload'),
         text: t('ui.pleaseSelect'),

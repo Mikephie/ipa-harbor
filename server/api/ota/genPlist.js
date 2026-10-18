@@ -1,3 +1,10 @@
+const { resolveOwnedIpaFile } = require('../../utils/appleAccount');
+const {
+    authorizeAsset,
+    ipaUrlForManifest,
+    readOtaConfig,
+} = require('../../utils/otaLink');
+
 function escapeXml(value) {
     return String(value)
         .replace(/&/g, '&amp;')
@@ -11,48 +18,94 @@ function isSafeHttpUrl(raw) {
     try {
         const url = new URL(String(raw));
         return url.protocol === 'http:' || url.protocol === 'https:';
-    } catch {
+    } catch (_) {
         return false;
     }
 }
 
-function asset(kind, url, needsShine) {
-    const shine = needsShine
-        ? `
-        <key>needs-shine</key>
-        <false/>`
-        : '';
+function safeLabel(value, fallback, pattern) {
+    const text = String(value || '').trim().slice(0, 120);
+    if (text && pattern.test(text)) {
+        return text;
+    }
+    return fallback;
+}
+
+function asset(kind, url) {
     return `
         <dict>
         <key>kind</key>
-        <string>${escapeXml(kind)}</string>${shine}
+        <string>${escapeXml(kind)}</string>
         <key>url</key>
         <string>${escapeXml(url)}</string>
         </dict>`;
 }
 
+function localIconUrl(iconUrl, baseUrl) {
+    let url;
+    try {
+        url = new URL(String(iconUrl));
+    } catch (_) {
+        return false;
+    }
+    return url.origin === baseUrl && /^\/v1\/app\/icon\/\d+$/.test(url.pathname);
+}
+
 /**
- * 给手机 itms-services 用的 HTTPS 安装清单。
- * palera.in 已不可用；清单必须 HTTPS，IPA 仍可指向本机 http://127.0.0.1。
+ * 已签名的 itms-services 清单。下载地址只来自 PUBLIC_BASE_URL。
  */
 function genPlistHandler(req, res) {
-    const bundleId = String(req.query.bundleid || '').trim();
-    const name = String(req.query.name || bundleId || 'App').trim();
-    const version = String(req.query.version || '1.0').trim();
-    const fetchUrl = String(req.query.fetchurl || '').trim();
-    const iconUrl = String(req.query.iconurl || '').trim();
+    const accountId = String(req.query.accountId || '').trim();
+    const file = String(req.query.file || '').trim();
+    const authz = authorizeAsset({
+        resource: 'manifest',
+        accountId,
+        fileName: file,
+        exp: req.query.exp,
+        sig: req.query.sig,
+    });
+    if (authz.status !== 200) {
+        return res.status(authz.status).json(authz.body);
+    }
 
-    if (!bundleId || !isSafeHttpUrl(fetchUrl)) {
-        return res.status(400).json({
+    const owned = resolveOwnedIpaFile(accountId, authz.ipaFileName);
+    if (!owned) {
+        return res.status(404).json({
             success: false,
-            message: '需要 bundleid 和合法的 fetchurl',
+            message: '找不到该账号下的 IPA',
         });
     }
 
-    let assets = asset('software-package', fetchUrl, false);
-    if (iconUrl && isSafeHttpUrl(iconUrl)) {
-        assets += asset('display-image', iconUrl, true);
-        assets += asset('full-size-image', iconUrl, true);
+    const ipaUrl = ipaUrlForManifest({
+        accountId,
+        ipaFileName: owned.ipaFileName,
+        exp: authz.exp,
+        config: authz.config,
+    });
+    if (!isSafeHttpUrl(ipaUrl)) {
+        return res.status(400).json({
+            success: false,
+            message: 'IPA 地址必须是 http 或 https',
+        });
+    }
+    const fetchUrl = String(req.query.fetchurl || '').trim();
+    if (fetchUrl && fetchUrl !== ipaUrl) {
+        return res.status(400).json({
+            success: false,
+            message: 'fetchurl 只能指向已签名的本机 IPA',
+        });
+    }
+
+    const bundleId = safeLabel(req.query.bundleid, 'app.local', /^[A-Za-z0-9][A-Za-z0-9.-]*$/);
+    const name = safeLabel(req.query.name, bundleId, /^[^\u0000-\u001f<>&]+$/);
+    const version = safeLabel(req.query.version, '1.0', /^[A-Za-z0-9][A-Za-z0-9._+-]*$/);
+    const iconUrl = String(req.query.iconurl || '').trim();
+    const baseUrl = readOtaConfig().baseUrl;
+
+    let assets = asset('software-package', ipaUrl);
+    if (iconUrl && isSafeHttpUrl(iconUrl) && localIconUrl(iconUrl, baseUrl)) {
+        assets += asset('display-image', iconUrl);
+        assets += asset('full-size-image', iconUrl);
     }
 
     const xml = `<?xml version="1.0" encoding="UTF-8"?>

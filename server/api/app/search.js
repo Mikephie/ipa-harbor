@@ -1,48 +1,22 @@
-const { exec } = require('child_process');
-const path = require('path');
-
-// ipatool二进制文件路径
-const IPATOOL_PATH = path.join(__dirname, '../../bin/ipatool');
-const { KEYCHAIN_PASSPHRASE } = require('../../config/keychain');
 const { ipatoolEnvForAccount } = require('../../utils/appleAccount');
+const { runIpatool, buildAuthInfoArgs, withKeychain } = require('../../utils/ipatoolExec');
 
-/**
- * 执行ipatool命令的通用函数
- * @param {string} command - 要执行的命令
- * @param {string} accountId - Apple 账号目录 ID
- * @returns {Promise} 返回Promise对象
- */
-function executeIpatool(command, accountId) {
-    return new Promise((resolve, reject) => {
-        exec(command, {
-            timeout: 30000,
-            env: ipatoolEnvForAccount(accountId),
-        }, (error, stdout, stderr) => {
-            if (error) {
-                reject({
-                    success: false,
-                    error: error.message,
-                    stderr: stderr,
-                    stdout: stdout
-                });
-            } else {
-                try {
-                    // 尝试解析JSON输出
-                    const result = JSON.parse(stdout);
-                    resolve({
-                        success: true,
-                        data: result
-                    });
-                } catch (parseError) {
-                    // 如果不是JSON格式，返回原始输出
-                    resolve({
-                        success: true,
-                        rawOutput: stdout
-                    });
-                }
-            }
-        });
-    });
+function executeIpatool(args, accountId) {
+    return runIpatool(args, {
+        timeout: 30000,
+        env: ipatoolEnvForAccount(accountId),
+    }).then(({ stdout }) => {
+        try {
+            return { success: true, data: JSON.parse(stdout) };
+        } catch (_) {
+            return { success: true, rawOutput: stdout };
+        }
+    }).catch((failure) => Promise.reject({
+        success: false,
+        error: 'ipatool exited',
+        stderr: failure.stderr || '',
+        stdout: failure.stdout || '',
+    }));
 }
 
 /**
@@ -67,8 +41,7 @@ async function searchHandler(req, res) {
         // 获取用户设置的地区（通过 ipatool 获取当前用户邮箱）
         let userRegion = null;
         try {
-            const infoCommand = `"${IPATOOL_PATH}" auth info --keychain-passphrase "${KEYCHAIN_PASSPHRASE}" --non-interactive --format "json"`;
-            const infoResult = await executeIpatool(infoCommand, accountId);
+            const infoResult = await executeIpatool(buildAuthInfoArgs(), accountId);
             if (infoResult.success && infoResult.data?.email) {
                 userRegion = global.userRegions?.get(infoResult.data.email);
             }
@@ -76,19 +49,23 @@ async function searchHandler(req, res) {
         }
 
         // 构建ipatool search命令
-        const command = `"${IPATOOL_PATH}" search "${keyword}" --limit ${parsedLimit} --keychain-passphrase "${KEYCHAIN_PASSPHRASE}" --non-interactive --format "json"`;
-
-        // console.log(`执行搜索命令: ${command}`);
+        const searchArgs = withKeychain([
+            'search',
+            String(keyword),
+            '--limit',
+            String(parsedLimit),
+        ]);
 
         try {
-            const result = await executeIpatool(command, accountId);
+            const result = await executeIpatool(searchArgs, accountId);
 
             if (result.success) {
+                const data = await withOwnedDelistedApp(result.data || result.rawOutput, keyword, accountId);
                 return res.json({
                     success: true,
                     message: '搜索成功',
                     keyword: keyword,
-                    data: result.data || result.rawOutput
+                    data
                 });
             } else {
                 return res.status(500).json({
@@ -125,6 +102,58 @@ async function searchHandler(req, res) {
             message: '服务器内部错误',
             error: error.message
         });
+    }
+}
+
+function numericAppId(keyword) {
+    const match = String(keyword || '').trim().match(/^(?:id)?(\d{6,})$/i);
+    return match ? match[1] : null;
+}
+
+function hasApps(data) {
+    return Array.isArray(data?.apps) && data.apps.length > 0;
+}
+
+async function withOwnedDelistedApp(data, keyword, accountId) {
+    if (hasApps(data)) {
+        return data;
+    }
+    const appId = numericAppId(keyword);
+    if (!appId) {
+        return data;
+    }
+    const stub = await ownedDelistedApp(accountId, appId);
+    if (!stub) {
+        return data;
+    }
+    const base = data && typeof data === 'object' ? data : {};
+    return {
+        ...base,
+        apps: [stub],
+        count: 1,
+    };
+}
+
+async function ownedDelistedApp(accountId, appId) {
+    try {
+        const result = await executeIpatool(withKeychain([
+            'list-versions',
+            '-i',
+            String(appId),
+        ]), accountId);
+        const versions = result.data?.externalVersionIdentifiers;
+        if (!result.success || !Array.isArray(versions) || versions.length === 0) {
+            return null;
+        }
+        return {
+            id: Number(appId),
+            bundleID: result.data.bundleID || `delisted.${appId}`,
+            name: `已下架应用 ${appId}`,
+            price: 0,
+            version: '',
+        };
+    } catch (_) {
+        return null;
     }
 }
 

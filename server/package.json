@@ -7,8 +7,11 @@
         "start": "node app.js",
         "dev": "nodemon app.js",
         "docker:build": "docker build -t ipa-harbor .",
-        "docker:run": "docker run -p 3000:3000 -e KEYCHAIN_PASSPHRASE=1122 ipa-harbor",
-        "health": "curl -f http://localhost:3000/health || exit 1"
+        "docker:run": "docker run -p 3080:3080 -e KEYCHAIN_PASSPHRASE -e JWT_SECRET -e PUBLIC_BASE_URL -e OTA_SIGNING_SECRET ipa-harbor",
+        "image:isolated": "bash scripts/build-isolated-image.sh",
+        "verify:isolated": "bash scripts/verify-isolated-release.sh",
+        "health": "curl -f http://localhost:3080/health || exit 1",
+        "test": "node --test test/*.test.js"
     },
     "dependencies": {
         "bcrypt": "^6.0.0",

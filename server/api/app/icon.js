@@ -1,12 +1,7 @@
 const https = require('https');
-const { exec } = require('child_process');
-const path = require('path');
-
-// ipatool二进制文件路径
-const IPATOOL_PATH = path.join(__dirname, '../../bin/ipatool');
-const { KEYCHAIN_PASSPHRASE } = require('../../config/keychain');
 const { readAppleAccountIdFromRequest, ipatoolEnvForAccount, resolveAccountRegion } = require('../../utils/appleAccount');
 const { lookupAppsWithFallback } = require('../../utils/itunesLookup');
+const { runIpatool, buildAuthInfoArgs } = require('../../utils/ipatoolExec');
 
 // 1×1 透明 GIF
 const ONE_PIXEL_GIF_BASE64 =
@@ -16,30 +11,23 @@ const ONE_PIXEL_GIF_BASE64 =
  * 获取当前用户的地区设置（同域请求可带 Apple 账号 cookie）
  */
 async function getUserRegion(req) {
-    return new Promise((resolve) => {
-        const accountId = req ? readAppleAccountIdFromRequest(req) : null;
-        const command = `"${IPATOOL_PATH}" auth info --keychain-passphrase "${KEYCHAIN_PASSPHRASE}" --non-interactive --format "json"`;
-        const execOpts = accountId
-            ? { timeout: 15000, env: ipatoolEnvForAccount(accountId) }
-            : { timeout: 15000 };
-
-        exec(command, execOpts, (error, stdout, stderr) => {
-            if (error) {
-                resolve(null);
-            } else {
-                try {
-                    const result = JSON.parse(stdout);
-                    if (result.email) {
-                        resolve(resolveAccountRegion(result.email, accountId));
-                    } else {
-                        resolve(null);
-                    }
-                } catch (parseError) {
-                    resolve(null);
-                }
-            }
+    const accountId = req ? readAppleAccountIdFromRequest(req) : null;
+    if (!accountId) {
+        return null;
+    }
+    try {
+        const { stdout } = await runIpatool(buildAuthInfoArgs(), {
+            timeout: 15000,
+            env: ipatoolEnvForAccount(accountId),
         });
-    });
+        const result = JSON.parse(stdout);
+        if (!result.email) {
+            return null;
+        }
+        return resolveAccountRegion(result.email, accountId);
+    } catch (_) {
+        return null;
+    }
 }
 
 /**

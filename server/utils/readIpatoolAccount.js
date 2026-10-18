@@ -3,11 +3,7 @@ const path = require('path');
 const { compactDecrypt } = require('jose');
 const { KEYCHAIN_PASSPHRASE } = require('../config/keychain');
 const { getAppleAccountHome, isValidAppleAccountId } = require('./appleAccount');
-
-function wantsStoreSession(req) {
-    const header = String(req.headers['x-export-store-session'] || '').trim();
-    return header === '1' || header.toLowerCase() === 'true';
-}
+const { wantsStoreSession } = require('./requestGuards');
 
 function parseJSON(text) {
     if (!text || typeof text !== 'string') {

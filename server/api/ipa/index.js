@@ -1,49 +1,33 @@
 const express = require('express');
 const router = express.Router();
-const path = require('path');
 const fs = require('fs');
 const https = require('https');
-const { exec } = require('child_process');
 
 // 导入IPA相关的路由
 const { metadataHandler, parseIpaMetadata } = require('./metadata');
 
-const IPATOOL_PATH = path.join(__dirname, '../../bin/ipatool');
-const { KEYCHAIN_PASSPHRASE } = require('../../config/keychain');
+const { authenticateToken } = require('../../middleware/auth');
 const {
-    readAppleAccountIdFromRequest,
-    ipatoolEnvForAccount,
-    LEGACY_FLAT_DATA_DIR,
-    resolveIpaFilePath,
+    isValidAppleAccountId,
+    resolveOwnedIpaFile,
+    resolveLegacyIpaFile,
+    resolveAccountRegion,
 } = require('../../utils/appleAccount');
+const {
+    authorizeAsset,
+    ipaUrlForManifest,
+    mintAccountInstall,
+    mintLegacyInstall,
+} = require('../../utils/otaLink');
 
-/**
- * 获取当前用户的地区设置（按请求中的 Apple 账号 cookie）
- */
 async function getUserRegion(req) {
-    return new Promise((resolve) => {
-        const accountId = req ? readAppleAccountIdFromRequest(req) : null;
-        const command = `"${IPATOOL_PATH}" auth info --keychain-passphrase "${KEYCHAIN_PASSPHRASE}" --non-interactive --format "json"`;
-        const execOpts = accountId ? { timeout: 15000, env: ipatoolEnvForAccount(accountId) } : { timeout: 15000 };
-
-        exec(command, execOpts, (error, stdout, stderr) => {
-            if (error) {
-                resolve(null);
-            } else {
-                try {
-                    const result = JSON.parse(stdout);
-                    if (result.email) {
-                        const region = global.userRegions?.get(result.email);
-                        resolve(region || null);
-                    } else {
-                        resolve(null);
-                    }
-                } catch (parseError) {
-                    resolve(null);
-                }
-            }
-        });
-    });
+    const accountId = isValidAppleAccountId(req?.params?.accountId)
+        ? req.params.accountId
+        : null;
+    if (!accountId) {
+        return null;
+    }
+    return resolveAccountRegion(null, accountId);
 }
 
 // 获取应用图标URL的辅助函数
@@ -56,7 +40,7 @@ async function getAppIconUrls(appId, userRegion = null) {
             lookupUrl = `https://itunes.apple.com/lookup?id=${appId}`;
         }
 
-        https.get(lookupUrl, (response) => {
+        const request = https.get(lookupUrl, (response) => {
             let data = '';
 
             response.on('data', (chunk) => (data += chunk));
@@ -79,7 +63,11 @@ async function getAppIconUrls(appId, userRegion = null) {
                     });
                 }
             });
-        }).on('error', (err) => {
+        });
+        request.setTimeout(4000, () => {
+            request.destroy();
+        });
+        request.on('error', (err) => {
             console.error('HTTPS请求失败:', err);
             resolve({
                 iconUrl60: '',
@@ -103,23 +91,33 @@ function escapeXml(text) {
         .replace(/'/g, '&apos;');
 }
 
-/** 反代后的公网 Host（OTA 清单里的 IPA URL 须与设备可访问的 TLS 主机一致） */
-function publicHostForOta(req) {
-    const raw = req.get('x-forwarded-host') || req.get('host') || '';
-    return raw.split(',')[0].trim();
+function sendAuthFailure(res, result) {
+    if (result.body) {
+        return res.status(result.status).json(result.body);
+    }
+    return res.status(result.status).send('Forbidden');
 }
 
 // 生成 manifest.plist 用于 iOS 无线安装（需 HTTPS 与有效证书）
 router.get('/install-package/:accountId/:fileName/manifest.plist', async (req, res) => {
     try {
         const { fileName, accountId } = req.params;
-
-        // 验证文件名格式 (应该是 appId_versionId 格式)
-        if (!fileName || !fileName.includes('_')) {
-            return res.status(400).send('Invalid file name format');
+        const authz = authorizeAsset({
+            resource: 'manifest',
+            accountId,
+            fileName,
+            exp: req.query.exp,
+            sig: req.query.sig,
+        });
+        if (authz.status !== 200) {
+            return sendAuthFailure(res, authz);
         }
 
-        const { ipaFileName, ipaPath } = resolveIpaFilePath(fileName, accountId);
+        const resolved = resolveOwnedIpaFile(accountId, authz.ipaFileName);
+        if (!resolved) {
+            return res.status(404).send('IPA file not found');
+        }
+        const { ipaFileName, ipaPath } = resolved;
 
         // 检查IPA文件是否存在
         if (!fs.existsSync(ipaPath)) {
@@ -145,12 +143,12 @@ router.get('/install-package/:accountId/:fileName/manifest.plist', async (req, r
             const iconUrl57 = metadata.softwareIcon57x57URL || iconUrls.iconUrl60 || '';
             const iconUrl512 = iconUrls.iconUrl512 || '';
 
-            const host = publicHostForOta(req);
-            if (!host) {
-                return res.status(500).send('Cannot determine public host');
-            }
-            // iOS OTA 要求 IPA 与清单均为 HTTPS
-            const ipaUrl = `https://${host}/v1/ipa/getpackage/${accountId}/${ipaFileName}`;
+            const ipaUrl = ipaUrlForManifest({
+                accountId,
+                ipaFileName,
+                exp: authz.exp,
+                config: authz.config,
+            });
             const ipaSize = fs.statSync(ipaPath).size;
 
             const assetBlocks = [];
@@ -223,12 +221,22 @@ ${assetBlocks.join('\n')}
 // 新：按账号目录下载 IPA
 router.get('/getpackage/:accountId/:fileName', (req, res) => {
     const { fileName, accountId } = req.params;
-
-    if (!fileName) {
-        return res.status(400).send('fileName parameter is required');
+    const authz = authorizeAsset({
+        resource: 'ipa',
+        accountId,
+        fileName,
+        exp: req.query.exp,
+        sig: req.query.sig,
+    });
+    if (authz.status !== 200) {
+        return sendAuthFailure(res, authz);
     }
 
-    const { ipaPath: filePath } = resolveIpaFilePath(fileName, accountId);
+    const resolved = resolveOwnedIpaFile(accountId, authz.ipaFileName);
+    if (!resolved) {
+        return res.status(404).send('File not found');
+    }
+    const { ipaPath: filePath } = resolved;
 
     // 检查文件是否存在
     if (!fs.existsSync(filePath)) {
@@ -276,12 +284,21 @@ router.get('/getpackage/:accountId/:fileName', (req, res) => {
 // 兼容旧路径：仅查找 data 根目录（升级前下载的文件）
 router.get('/getpackage/:fileName', (req, res) => {
     const { fileName } = req.params;
-
-    if (!fileName) {
-        return res.status(400).send('fileName parameter is required');
+    const authz = authorizeAsset({
+        resource: 'legacy-ipa',
+        fileName,
+        exp: req.query.exp,
+        sig: req.query.sig,
+    });
+    if (authz.status !== 200) {
+        return sendAuthFailure(res, authz);
     }
 
-    const filePath = path.join(LEGACY_FLAT_DATA_DIR, fileName);
+    const legacy = resolveLegacyIpaFile(authz.ipaFileName);
+    const filePath = legacy?.ipaPath || '';
+    if (!filePath) {
+        return res.status(404).send('File not found');
+    }
 
     if (!fs.existsSync(filePath)) {
         return res.status(404).send('File not found');
@@ -322,6 +339,16 @@ router.get('/getpackage/:fileName', (req, res) => {
     });
 
     fileStream.pipe(res);
+});
+
+router.post('/install-link', authenticateToken, (req, res) => {
+    const result = mintAccountInstall(req);
+    return res.status(result.status).json(result.body);
+});
+
+router.post('/legacy-install-link', authenticateToken, (req, res) => {
+    const result = mintLegacyInstall(req);
+    return res.status(result.status).json(result.body);
 });
 
 module.exports = router;

@@ -1,0 +1,28 @@
+# 正式發布用範本。不要對群暉現有 compose 直接套用，也不要在未獲授權時執行。
+# 密鑰只從呼叫端環境注入。本檔不包含 JWT、鑰匙串或 OTA 簽名的值。
+# 移除七個原始碼覆寫掛載。資料庫、Apple 會話與證書仍走原來的資料卷。
+
+services:
+  ipa-harbor:
+    image: ${IPA_HARBOR_IMAGE:?set the approved image}
+    container_name: ipa-harbor
+    restart: unless-stopped
+    ports:
+      - "3388:3080"
+      - "3443:3443"
+    environment:
+      NODE_ENV: production
+      PORT: "3080"
+      HTTPS_PORT: "3443"
+      ALLOW_LAN_ACCESS: "true"
+      ALLOWED_DOMAINS: 192.168.88.88,mikephie.synology.me,ipa.mikephie.com
+      ENABLE_MORE_LOGS: "true"
+      DBUS_SESSION_BUS_ADDRESS: unix:path=/nonexistent
+      PUBLIC_BASE_URL: https://ipa.mikephie.com
+      KEYCHAIN_PASSPHRASE: ${KEYCHAIN_PASSPHRASE:?reuse the current production value}
+      JWT_SECRET: ${JWT_SECRET:?reuse the current image signing source}
+      OTA_SIGNING_SECRET: ${OTA_SIGNING_SECRET:?generate at deploy time}
+    volumes:
+      - ./data:/app/data
+      - ./certs/server.crt:/app/certs/server.crt
+      - ./certs/server.key:/app/certs/server.key

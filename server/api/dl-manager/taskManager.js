@@ -4,7 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const { parseIpaMetadata } = require('../ipa/metadata');
 const wsManager = require('../../utils/websocketServer');
-const { getAppleAccountHome, ipatoolEnvForAccount } = require('../../utils/appleAccount');
+const { getAppleAccountHome, ipatoolEnvForAccount, isValidAppleAccountId } = require('../../utils/appleAccount');
+const { filterTasksForAccount } = require('./taskAccess');
 
 // 配置
 const IPATOOL_PATH = path.join(__dirname, '../../bin/ipatool');
@@ -118,12 +119,15 @@ class TaskManager {
 
     // 处理队列
     processQueue() {
-        setInterval(() => {
+        const timer = setInterval(() => {
             if (this.runningTasks.size < MAX_CONCURRENT && this.queue.length > 0) {
                 const taskId = this.queue.shift();
                 this.startDownload(taskId);
             }
         }, 1000);
+        if (typeof timer.unref === 'function') {
+            timer.unref();
+        }
     }
 
     // 开始下载
@@ -548,13 +552,7 @@ class TaskManager {
 
     // 获取任务列表
     getTasks(accountId) {
-        // WebSocket 若在 Apple 登录前就连上，cookie 里还没有账号 ID。
-        // 这时仍返回全部任务，否则网页会显示「任务已创建」随后列表被清空。
-        return Array.from(this.tasks.values())
-            .filter(t => !accountId || t.accountId === accountId)
-            .sort((a, b) =>
-                new Date(b.createdAt) - new Date(a.createdAt)
-            );
+        return filterTasksForAccount(this.tasks.values(), accountId);
     }
 
     // 获取单个任务
@@ -590,6 +588,9 @@ class TaskManager {
     // 获取文件列表
     getFiles(accountId) {
         try {
+            if (!isValidAppleAccountId(accountId)) {
+                return [];
+            }
             const dataDir = this.accountDataDir(accountId);
             if (!fs.existsSync(dataDir)) {
                 return [];

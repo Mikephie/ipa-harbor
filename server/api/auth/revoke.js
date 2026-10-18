@@ -1,49 +1,24 @@
-const { exec } = require('child_process');
-const path = require('path');
-
-// ipatool二进制文件路径
-const IPATOOL_PATH = path.join(__dirname, '../../bin/ipatool');
-const { KEYCHAIN_PASSPHRASE } = require('../../config/keychain');
 const {
     readAppleAccountIdFromRequest,
     ipatoolEnvForAccount,
     clearAppleAccountCookie,
     wipeIpatoolSession,
 } = require('../../utils/appleAccount');
+const { runIpatool, buildAuthRevokeArgs } = require('../../utils/ipatoolExec');
 
-/**
- * 执行ipatool命令的通用函数
- * @param {string} command - 要执行的命令
- * @returns {Promise} 返回Promise对象
- */
-function executeIpatool(command, execOptions = {}) {
-    return new Promise((resolve, reject) => {
-        exec(command, { timeout: 15000, ...execOptions }, (error, stdout, stderr) => {
-            if (error) {
-                reject({
-                    success: false,
-                    error: error.message,
-                    stderr: stderr,
-                    stdout: stdout
-                });
-            } else {
-                try {
-                    // 尝试解析JSON输出
-                    const result = JSON.parse(stdout);
-                    resolve({
-                        success: true,
-                        data: result
-                    });
-                } catch (parseError) {
-                    // 如果不是JSON格式，返回原始输出
-                    resolve({
-                        success: true,
-                        rawOutput: stdout
-                    });
-                }
-            }
-        });
-    });
+function executeIpatool(args, execOptions = {}) {
+    return runIpatool(args, { timeout: 15000, ...execOptions }).then(({ stdout }) => {
+        try {
+            return { success: true, data: JSON.parse(stdout) };
+        } catch (_) {
+            return { success: true, rawOutput: stdout };
+        }
+    }).catch((failure) => Promise.reject({
+        success: false,
+        error: 'ipatool exited',
+        stderr: failure.stderr || '',
+        stdout: failure.stdout || '',
+    }));
 }
 
 /**
@@ -61,15 +36,19 @@ async function revokeHandler(req, res) {
             });
         }
 
+        const userAgent = String(req.headers['user-agent'] || '');
+        if (userAgent.includes('CFNetwork') || userAgent.includes('APP/')) {
+            return res.json({
+                success: true,
+                message: '已保留现有商店会话',
+            });
+        }
+
         const execEnv = { env: ipatoolEnvForAccount(accountId) };
 
-        // 构建ipatool revoke命令
-        const command = `"${IPATOOL_PATH}" auth revoke --keychain-passphrase "${KEYCHAIN_PASSPHRASE}" --non-interactive --format "json"`;
-
-        // console.log('执行撤销认证命令');
-
+        // 网页撤销仍调用 ipatool，并清掉该账号钥匙串。App 在上面已经返回。
         try {
-            const result = await executeIpatool(command, execEnv);
+            const result = await executeIpatool(buildAuthRevokeArgs(), execEnv);
 
             if (result.success) {
                 try {

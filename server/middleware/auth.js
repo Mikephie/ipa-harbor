@@ -1,8 +1,10 @@
 const jwt = require('jsonwebtoken');
 const database = require('../utils/database');
+const { readPresentedToken } = require('../utils/requestGuards');
+const { enforceJwtSecret } = require('../config/jwtSecret');
 
-// JWT密钥，从环境变量获取
-const JWT_SECRET = process.env.JWT_SECRET || 'secret-jwt-key';
+// 与 KEYCHAIN_PASSPHRASE、OTA_SIGNING_SECRET 分开。正式环境未设置时在监听前退出。
+const JWT_SECRET = enforceJwtSecret();
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '2d'; // 2天
 
 /**
@@ -29,12 +31,7 @@ function verifyToken(token) {
  */
 async function authenticateToken(req, res, next) {
     try {
-        const headerToken = String(req.headers.authorization || '')
-            .replace(/^Bearer\s+/i, '')
-            .trim();
-        const token = req.cookies?.authToken
-            || req.headers['x-auth-token']
-            || headerToken;
+        const token = readPresentedToken(req);
 
         if (!token) {
             return res.status(401).json({
@@ -75,11 +72,11 @@ async function authenticateToken(req, res, next) {
                 error: 'Invalid token'
             });
         } else {
-            console.error('认证中间件错误:', error);
+            console.error('认证中间件错误:', error?.name || 'Error');
             return res.status(500).json({
                 success: false,
                 message: '认证过程中发生错误',
-                error: error.message
+                error: '认证失败'
             });
         }
     }
@@ -91,7 +88,7 @@ async function authenticateToken(req, res, next) {
  */
 async function optionalAuth(req, res, next) {
     try {
-        const token = req.cookies?.authToken;
+        const token = readPresentedToken(req);
 
         if (token) {
             const decoded = verifyToken(token);
@@ -113,6 +110,5 @@ module.exports = {
     verifyToken,
     authenticateToken,
     optionalAuth,
-    JWT_SECRET,
     JWT_EXPIRES_IN
 };

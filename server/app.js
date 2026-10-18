@@ -109,7 +109,11 @@ app.use(cors({
 
 
 if (process.env.ENABLE_MORE_LOGS === 'true') {
-    app.use(morgan('combined'));
+    morgan.token('safe-url', (req) => {
+        const url = req.originalUrl || req.url || '';
+        return url.replace(/([?&])sig=[^&]*/g, '$1sig=redacted');
+    });
+    app.use(morgan(':remote-addr :method :safe-url :status :res[content-length] - :response-time ms'));
 }
 
 if (KEYCHAIN_PASSPHRASE && NODE_ENV === 'production') {

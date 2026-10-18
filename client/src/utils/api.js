@@ -235,21 +235,18 @@ export async function clearAllTasks() {
 /**
  * @param {string} accountId - 当前 Apple 账号目录 ID（来自 /v1/auth/info）
  */
-export function getAppInstallPackageUrl(appId, versionId, accountId) {
-    if (!accountId) return '';
-    const manifestUrl = `${API_BASE_URL}/v1/ipa/install-package/${accountId}/${appId}_${versionId}/manifest.plist`;
-    return `itms-services://?action=download-manifest&url=${encodeURIComponent(manifestUrl)}`;
-}
-
-/**
- * 获取应用下载包URL
- * @param {number} appId - 应用ID
- * @param {string} versionId - 版本ID
- * @param {string} accountId - 当前 Apple 账号目录 ID
- */
-export function getAppDownloadPackageUrl(appId, versionId, accountId) {
-    if (!accountId) return '';
-    return `${API_BASE_URL}/v1/ipa/getpackage/${accountId}/${appId}_${versionId}.ipa`;
+export async function createSignedInstallLink(appId, versionId, accountId) {
+    if (!accountId) {
+        throw new Error('请先登录 Apple 账号');
+    }
+    return apiRequest('/v1/ipa/install-link', {
+        method: 'POST',
+        body: JSON.stringify({
+            appId: String(appId),
+            versionId: String(versionId),
+            accountId,
+        }),
+    });
 }
 
 // ===== 管理员认证相关API =====

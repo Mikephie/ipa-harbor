@@ -1,28 +1,17 @@
-const { exec } = require('child_process');
-const path = require('path');
-
-const IPATOOL_PATH = path.join(__dirname, '../../bin/ipatool');
-const { KEYCHAIN_PASSPHRASE } = require('../../config/keychain');
 const { ipatoolEnvForAccount, resolveAccountRegion } = require('../../utils/appleAccount');
 const { lookupAppsWithFallback } = require('../../utils/itunesLookup');
+const { runIpatool, buildAuthInfoArgs } = require('../../utils/ipatoolExec');
 
-function executeIpatool(command, accountId) {
-    return new Promise((resolve, reject) => {
-        exec(command, {
-            timeout: 15000,
-            env: ipatoolEnvForAccount(accountId),
-        }, (error, stdout, stderr) => {
-            if (error) {
-                reject(error);
-            } else {
-                try {
-                    const result = JSON.parse(stdout);
-                    resolve({ success: true, data: result });
-                } catch (parseError) {
-                    resolve({ success: true, rawOutput: stdout });
-                }
-            }
-        });
+function executeIpatool(args, accountId) {
+    return runIpatool(args, {
+        timeout: 15000,
+        env: ipatoolEnvForAccount(accountId),
+    }).then(({ stdout }) => {
+        try {
+            return { success: true, data: JSON.parse(stdout) };
+        } catch (_) {
+            return { success: true, rawOutput: stdout };
+        }
     });
 }
 
@@ -58,8 +47,7 @@ async function detailsHandler(req, res) {
 
         let userRegion = null;
         try {
-            const infoCommand = `"${IPATOOL_PATH}" auth info --keychain-passphrase "${KEYCHAIN_PASSPHRASE}" --non-interactive --format "json"`;
-            const infoResult = await executeIpatool(infoCommand, req.appleAccountId);
+            const infoResult = await executeIpatool(buildAuthInfoArgs(), req.appleAccountId);
             if (infoResult.success && infoResult.data?.email) {
                 userRegion = resolveAccountRegion(infoResult.data.email, req.appleAccountId);
             }
@@ -72,11 +60,18 @@ async function detailsHandler(req, res) {
                 lang,
             });
 
-            if (results.length > 0) {
+            const foundIds = new Set(results.map((item) => String(item.trackId || item.trackID || '')));
+            const stubs = idArray
+                .map((id) => String(id).trim())
+                .filter((id) => /^\d+$/.test(id) && !foundIds.has(id))
+                .map(delistedAppStub);
+            const data = results.concat(stubs);
+
+            if (data.length > 0) {
                 return res.json({
                     success: true,
-                    message: '获取应用详情成功',
-                    data: results
+                    message: results.length > 0 ? '获取应用详情成功' : '商店目录已下架，可按版本号下载',
+                    data,
                 });
             }
 
@@ -102,6 +97,31 @@ async function detailsHandler(req, res) {
             error: error.message
         });
     }
+}
+
+function delistedAppStub(id) {
+    const trackId = Number(id);
+    return {
+        trackId,
+        trackName: `已下架应用 ${trackId}`,
+        artistName: '',
+        bundleId: `delisted.${trackId}`,
+        artworkUrl60: '',
+        artworkUrl100: '',
+        artworkUrl512: '',
+        formattedPrice: '已下架',
+        price: 0,
+        version: '',
+        description: '商店目录里已经没有这个应用。当前账号如果已有许可证，填写版本号即可下载。',
+        releaseNotes: '',
+        primaryGenreName: '',
+        averageUserRating: 0,
+        userRatingCount: 0,
+        fileSizeBytes: '0',
+        currency: 'USD',
+        kind: 'software',
+        wrapperType: 'software',
+    };
 }
 
 module.exports = detailsHandler;

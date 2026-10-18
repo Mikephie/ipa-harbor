@@ -16,7 +16,11 @@ function parseIpaMetadata(fileName, accountId) {
         if (!accountId) {
             return reject(new Error('缺少 accountId'));
         }
-        const { ipaFileName, ipaPath, dataDir } = resolveIpaFilePath(fileName, accountId);
+        const resolved = resolveIpaFilePath(fileName, accountId);
+        if (!resolved) {
+            return reject(new Error('无效的 IPA 路径'));
+        }
+        const { ipaFileName, ipaPath, dataDir } = resolved;
         const jsonPath = path.join(dataDir, ipaFileName.replace(/\.ipa$/i, '.json'));
 
         // 检查IPA文件是否存在

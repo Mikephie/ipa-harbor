@@ -1,17 +1,17 @@
-const { exec } = require('child_process');
-const path = require('path');
-
-// ipatool二进制文件路径
-const IPATOOL_PATH = path.join(__dirname, '../../bin/ipatool');
-const { KEYCHAIN_PASSPHRASE } = require('../../config/keychain');
 const {
     appleAccountIdFromEmail,
     setAppleAccountCookie,
     ipatoolEnvForAccount,
     writeAccountMeta,
-    wipeIpatoolSession,
 } = require('../../utils/appleAccount');
-const { wantsStoreSession, readIpatoolStoreSession } = require('../../utils/readIpatoolAccount');
+const { readIpatoolStoreSession } = require('../../utils/readIpatoolAccount');
+const { canExportStoreSession } = require('../../utils/requestGuards');
+const {
+    buildLoginArgs,
+    buildAuthInfoArgs,
+    redactCommandText,
+    runIpatool,
+} = require('../../utils/ipatoolExec');
 
 const LOGIN_TIMEOUT_MS = 240000;
 
@@ -92,8 +92,8 @@ function describeLoginFailure(stdout = '', stderr = '', execMessage = '') {
         return 'Apple ID 或密码不正确';
     }
 
-    const human = fromStdout.error || fromStdout.message || fromStderr.error || fromStderr.message;
-    if (human && human.toLowerCase() !== 'something went wrong') {
+    const human = redactCommandText(fromStdout.error || fromStdout.message || fromStderr.error || fromStderr.message);
+    if (human && human.toLowerCase() !== 'something went wrong' && !/passwordtoken|cookie|dspersonid|directoryservicesidentifier/i.test(human)) {
         return human;
     }
 
@@ -117,66 +117,84 @@ function parseJsonSafely(content = '') {
  * @param {string} command - 要执行的命令
  * @returns {Promise} 返回Promise对象
  */
-function executeIpatool(command, execOptions = {}) {
-    return new Promise((resolve, reject) => {
-        exec(command, { timeout: 30000, ...execOptions }, (error, stdout, stderr) => {
-            const jsonStdout = parseJsonSafely(stdout);
-            const jsonStderr = parseJsonSafely(stderr);
-            const combinedOutput = `${stdout || ''}\n${stderr || ''}`;
+const SECRET_FIELDS = new Set([
+    'password',
+    'passwordToken',
+    'cookies',
+    'cookie',
+    'dsPersonId',
+    'directoryServicesIdentifier',
+]);
 
-            if (error) {
-                const jsonMessage = [
-                    jsonStdout?.message,
-                    jsonStdout?.error,
-                    jsonStderr?.message,
-                    jsonStderr?.error,
-                ].filter(Boolean).join('\n');
-                const needsTwoFactor = Boolean(
-                    jsonStdout?.needsTwoFactor ||
-                    jsonStderr?.needsTwoFactor ||
-                    isTwoFactorRequired(jsonMessage) ||
-                    isTwoFactorRequired(combinedOutput)
-                );
+function omitStoreSecrets(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        return data;
+    }
+    const copy = {};
+    for (const [key, value] of Object.entries(data)) {
+        if (!SECRET_FIELDS.has(key)) {
+            copy[key] = value;
+        }
+    }
+    return copy;
+}
 
-                // 检查是否是需要2FA的错误
-                if (needsTwoFactor) {
-                    resolve({
-                        success: false,
-                        needsTwoFactor: true,
-                        message: '需要二次验证码',
-                        rawOutput: combinedOutput
-                    });
-                } else {
-                    reject({
-                        success: false,
-                        error: error.message,
-                        stderr: stderr,
-                        stdout: stdout
-                    });
-                }
-            } else {
-                try {
-                    // 尝试解析JSON输出
-                    const result = jsonStdout || JSON.parse(stdout);
-                    resolve({
-                        success: true,
-                        data: result
-                    });
-                } catch (parseError) {
-                    // 如果不是JSON格式，返回原始输出
-                    resolve({
-                        success: true,
-                        rawOutput: stdout
-                    });
-                }
-            }
+function executeIpatool(args, execOptions = {}) {
+    return runIpatool(args, { timeout: 30000, ...execOptions }).then(({ stdout, stderr }) => {
+        const jsonStdout = parseJsonSafely(stdout);
+        try {
+            const result = jsonStdout || JSON.parse(stdout);
+            return {
+                success: true,
+                data: result,
+            };
+        } catch (_) {
+            return {
+                success: true,
+                rawOutput: stdout,
+                stderr,
+            };
+        }
+    }).catch((failure) => {
+        const stdout = failure.stdout || '';
+        const stderr = failure.stderr || '';
+        const jsonStdout = parseJsonSafely(stdout);
+        const jsonStderr = parseJsonSafely(stderr);
+        const combinedOutput = `${stdout}\n${stderr}`;
+        const jsonMessage = [
+            jsonStdout?.message,
+            jsonStdout?.error,
+            jsonStderr?.message,
+            jsonStderr?.error,
+        ].filter(Boolean).join('\n');
+        const needsTwoFactor = Boolean(
+            jsonStdout?.needsTwoFactor ||
+            jsonStderr?.needsTwoFactor ||
+            isTwoFactorRequired(jsonMessage) ||
+            isTwoFactorRequired(combinedOutput)
+        );
+
+        if (needsTwoFactor) {
+            return {
+                success: false,
+                needsTwoFactor: true,
+                message: '需要二次验证码',
+                rawOutput: redactCommandText(combinedOutput),
+            };
+        }
+
+        return Promise.reject({
+            success: false,
+            error: 'ipatool exited',
+            stderr,
+            stdout,
         });
     });
 }
 
 async function attachStoreSession(req, data, accountId) {
-    if (!wantsStoreSession(req)) {
-        return data;
+    if (!canExportStoreSession(req)) {
+        return omitStoreSecrets(data);
     }
 
     const session = await readIpatoolStoreSession(accountId);
@@ -219,25 +237,34 @@ async function loginHandler(req, res) {
         const accountId = appleAccountIdFromEmail(email);
         const execEnv = { env: ipatoolEnvForAccount(accountId) };
 
-        // 不要在每次登录前 wipe：下午 SAP 刚修好时能下载的会话，就是被反复清钥匙串冲掉的。
-
-        // 构建ipatool命令
-        // 必须用 --email= / --password=。短参数 -e/-p 时 ipatool 常不向苹果要验证码。
-        const escapedEmail = String(email).replace(/"/g, '\\"');
-        const escapedPassword = String(password).replace(/"/g, '\\"');
-        let command = `"${IPATOOL_PATH}" auth login --email="${escapedEmail}" --password="${escapedPassword}" --keychain-passphrase "${KEYCHAIN_PASSPHRASE}" --non-interactive --format "json"`;
-
-        // 如果提供了二次验证码，添加到命令中
-        if (twoFactor) {
-            // 2FA验证码仅允许数字，避免参数异常并提升兼容性
-            const sanitizedTwoFactor = String(twoFactor).replace(/\D/g, '').slice(0, 8);
-            command += ` --auth-code "${sanitizedTwoFactor}"`;
+        // 本地钥匙串已经可读时直接交还会话，不再向苹果做全新认证。
+        // 网页和 App 都走这里。没有会话、或用户正在提交验证码时，才继续原来的 ipatool 登录。
+        if (!twoFactor) {
+            const existing = await readIpatoolStoreSession(accountId);
+            const storedEmail = String(existing?.email || '').trim().toLowerCase();
+            const requestedEmail = String(email).trim().toLowerCase();
+            if (existing && (!storedEmail || storedEmail === requestedEmail)) {
+                setAppleAccountCookie(res, accountId);
+                writeAccountMeta(accountId, { email: storedEmail || requestedEmail });
+                console.log(`复用已有商店会话: ${accountId}`);
+                return res.json({
+                    success: true,
+                    message: '登录成功',
+                    data: await attachStoreSession(req, {
+                        email: storedEmail || requestedEmail,
+                        name: existing.name,
+                        accountId,
+                    }, accountId),
+                });
+            }
         }
 
-        // console.log(`执行登录命令: ${command.replace(password, '***').replace(twoFactor || '', '***')}`);
+        // 不要在每次登录前 wipe：下午 SAP 刚修好时能下载的会话，就是被反复清钥匙串冲掉的。
+        // 必须用 --email= / --password=。短参数 -e/-p 时 ipatool 常不向苹果要验证码。
+        const loginArgs = buildLoginArgs({ email, password, twoFactor });
 
         try {
-            const result = await executeIpatool(command, {
+            const result = await executeIpatool(loginArgs, {
                 ...execEnv,
                 timeout: LOGIN_TIMEOUT_MS,
             });
@@ -250,24 +277,23 @@ async function loginHandler(req, res) {
                     .join('\n');
                 if (isTwoFactorRequired(resultHint)) {
                     // 处理message，移除分号后的内容
-                    const rawMessage = resultData.message || resultData.error || resultHint;
-                    const cleanMessage = String(rawMessage).split(';')[0];
+                    const rawMessage = resultData.message || resultData.error || '';
+                    const cleanMessage = redactCommandText(String(rawMessage).split(';')[0]);
                     return res.status(200).json({
                         success: false,
                         needsTwoFactor: true,
                         message: '请求错误 / 请输入二次验证码',
                         data: {
-                            ...resultData,
                             message: cleanMessage
                         }
                     });
                 }
 
                 // 真正的登录成功，获取用户信息
-                const infoCommand = `"${IPATOOL_PATH}" auth info --keychain-passphrase "${KEYCHAIN_PASSPHRASE}" --non-interactive --format "json"`;
+                const infoArgs = buildAuthInfoArgs();
 
                 try {
-                    const infoResult = await executeIpatool(infoCommand, execEnv);
+                    const infoResult = await executeIpatool(infoArgs, execEnv);
 
                     if (infoResult.success) {
                         setAppleAccountCookie(res, accountId);
@@ -278,7 +304,7 @@ async function loginHandler(req, res) {
                             success: true,
                             message: '登录成功',
                             data: await attachStoreSession(req, {
-                                ...infoResult.data,
+                                ...omitStoreSecrets(infoResult.data),
                                 accountId,
                             }, accountId)
                         });
@@ -290,7 +316,7 @@ async function loginHandler(req, res) {
                             success: true,
                             message: '登录成功，但获取用户信息失败',
                             data: await attachStoreSession(req, {
-                                ...(typeof result.data === 'object' && result.data ? result.data : {}),
+                                ...omitStoreSecrets(typeof result.data === 'object' && result.data ? result.data : {}),
                                 accountId,
                             }, accountId)
                         });
@@ -303,7 +329,7 @@ async function loginHandler(req, res) {
                         success: true,
                         message: '登录成功，但获取用户信息时出错',
                         data: await attachStoreSession(req, {
-                            ...(typeof result.data === 'object' && result.data ? result.data : {}),
+                            ...omitStoreSecrets(typeof result.data === 'object' && result.data ? result.data : {}),
                             accountId,
                         }, accountId)
                     });
@@ -324,7 +350,7 @@ async function loginHandler(req, res) {
                 });
             }
         } catch (execError) {
-            console.error('执行ipatool命令时出错:', execError?.stdout);
+            console.error('执行ipatool登录命令失败');
 
             // 检查错误信息中是否包含2FA相关内容
             if (isTwoFactorRequired(`${execError.stdout || ''}\n${execError.stderr || ''}`)) {
@@ -336,9 +362,9 @@ async function loginHandler(req, res) {
             }
 
             const friendlyMessage = describeLoginFailure(
-                execError?.stdout || '',
-                execError?.stderr || '',
-                execError?.error || execError?.message || ''
+                redactCommandText(execError?.stdout || ''),
+                redactCommandText(execError?.stderr || ''),
+                ''
             ) || 'APPLE ID 登录过程中发生错误';
 
             return res.status(500).json({
@@ -353,7 +379,7 @@ async function loginHandler(req, res) {
         return res.status(500).json({
             success: false,
             message: '服务器内部错误',
-            error: error.message
+            error: '内部错误'
         });
     }
 }
